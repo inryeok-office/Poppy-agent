@@ -23,7 +23,7 @@ class RobotStatus:
 
     connection_status: str
     operational_status: str
-    battery_percent: float | None
+    battery_percent: int | None
     current_execution_id: str | None
 
 

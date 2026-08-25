@@ -1,0 +1,195 @@
+import json
+from datetime import UTC, datetime
+from uuid import UUID
+
+import httpx
+import pytest
+
+from poppy_agent.server import (
+    AgentRegistrationRequest,
+    HeartbeatRequest,
+    HeartbeatRobotRequest,
+    RobotRegistrationRequest,
+    ServerApiError,
+    ServerClient,
+    ServerConfig,
+    ServerResponseError,
+    ServerTransportError,
+)
+
+ROBOT_ID = UUID("00000000-0000-0000-0000-000000000001")
+AGENT_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+
+def client_for(handler, *, max_retries: int = 0, sleep=None) -> ServerClient:
+    return ServerClient(
+        ServerConfig(
+            server_url="https://server.example.test",
+            agent_token="dummy-agent-token",
+            agent_name="agent-test",
+            agent_version="0.1.0",
+            sdk_version="not-applicable",
+            platform="test",
+            max_retries=max_retries,
+        ),
+        transport=httpx.MockTransport(handler),
+        sleep=sleep or (lambda _: None),
+    )
+
+
+def registration_request() -> AgentRegistrationRequest:
+    return AgentRegistrationRequest(
+        agent_name="agent-test",
+        agent_version="0.1.0",
+        sdk_version="not-applicable",
+        platform="test",
+        robots=(
+            RobotRegistrationRequest(
+                robot_id=ROBOT_ID,
+                model="GO2",
+                edition="EDU",
+                firmware_version="1.0.0",
+                capabilities=("TELEMETRY",),
+            ),
+        ),
+    )
+
+
+def test_register_maps_request_header_and_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/v1/internal/agents/register"
+        assert request.headers["X-Agent-Token"] == "dummy-agent-token"
+        body = json.loads(request.content)
+        assert body["robots"][0]["robotId"] == str(ROBOT_ID)
+        return httpx.Response(
+            201,
+            json={
+                "success": True,
+                "data": {
+                    "agentId": str(AGENT_ID),
+                    "registeredAt": "2026-08-25T10:20:30",
+                    "acceptedRobotIds": [str(ROBOT_ID)],
+                },
+                "error": None,
+            },
+        )
+
+    client = client_for(handler)
+    response = client.register_agent(registration_request())
+    client.close()
+
+    assert response.agent_id == AGENT_ID
+    assert response.accepted_robot_ids == (ROBOT_ID,)
+    assert response.registered_at == datetime(2026, 8, 25, 10, 20, 30)
+
+
+def test_heartbeat_preserves_nullable_and_omitted_execution_fields() -> None:
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {"agentId": str(AGENT_ID), "acceptedAt": "2026-08-25T10:20:31"},
+                "error": None,
+            },
+        )
+
+    client = client_for(handler)
+    client.send_heartbeat(
+        AGENT_ID,
+        HeartbeatRequest(
+            sent_at=datetime(2026, 8, 25, 10, 20, 30, tzinfo=UTC),
+            robots=(
+                HeartbeatRobotRequest(
+                    robot_id=ROBOT_ID,
+                    connection_status="ONLINE",
+                    operational_status="READY",
+                    battery_percent=None,
+                    current_execution_id=None,
+                ),
+            ),
+        ),
+    )
+    client.send_heartbeat(
+        AGENT_ID,
+        HeartbeatRequest(
+            sent_at=datetime(2026, 8, 25, 10, 20, 30),
+            robots=(
+                HeartbeatRobotRequest(
+                    robot_id=ROBOT_ID,
+                    connection_status="OFFLINE",
+                    operational_status="UNAVAILABLE",
+                    battery_percent=75,
+                    current_execution_id=AGENT_ID,
+                    current_execution_id_provided=False,
+                ),
+            ),
+        ),
+    )
+    client.close()
+
+    assert payloads[0]["sentAt"] == "2026-08-25T10:20:30"
+    assert payloads[0]["robots"][0]["currentExecutionId"] is None
+    assert "currentExecutionId" not in payloads[1]["robots"][0]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_code"),
+    [(400, "COMMON_400"), (401, "AGENT_AUTH_INVALID"), (409, "AGENT_ALREADY_REGISTERED")],
+)
+def test_http_error_is_typed_without_echoing_token(status_code: int, error_code: str) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status_code,
+            json={
+                "success": False,
+                "data": None,
+                "error": {"code": error_code, "message": "safe test message"},
+            },
+        )
+
+    client = client_for(handler)
+    with pytest.raises(ServerApiError) as raised:
+        client.register_agent(registration_request())
+    client.close()
+
+    assert raised.value.status_code == status_code
+    assert raised.value.error_code == error_code
+    assert "dummy-agent-token" not in str(raised.value)
+
+
+def test_timeout_retries_once_then_raises_safe_error() -> None:
+    calls = 0
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("test timeout", request=request)
+
+    client = client_for(handler, max_retries=1, sleep=delays.append)
+    with pytest.raises(ServerTransportError, match="timed out"):
+        client.register_agent(registration_request())
+    client.close()
+
+    assert calls == 2
+    assert delays == [0.1]
+
+
+def test_connection_failure_and_malformed_response_are_reported() -> None:
+    def connection_failure(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("test connection failure", request=request)
+
+    client = client_for(connection_failure)
+    with pytest.raises(ServerTransportError, match="connection failed"):
+        client.register_agent(registration_request())
+    client.close()
+
+    client = client_for(lambda _: httpx.Response(201, text="not-json"))
+    with pytest.raises(ServerResponseError, match="malformed JSON"):
+        client.register_agent(registration_request())
+    client.close()

@@ -12,7 +12,7 @@ def test_mock_robot_initialization_identity_status_and_capabilities() -> None:
             edition="test",
             firmware_version="1.0.0",
             sdk_version="mock-sdk",
-            battery_percent=87.5,
+            battery_percent=87,
             current_execution_id=None,
         )
     )
@@ -24,7 +24,7 @@ def test_mock_robot_initialization_identity_status_and_capabilities() -> None:
 
     assert adapter.identity().robot_id == "test-robot"
     assert adapter.identity().model == "mock-model"
-    assert adapter.status().battery_percent == 87.5
+    assert adapter.status().battery_percent == 87
     assert adapter.status().current_execution_id is None
     assert adapter.capabilities() == ("telemetry",)
 
