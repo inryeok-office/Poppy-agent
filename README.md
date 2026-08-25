@@ -2,8 +2,9 @@
 
 Poppy-Agent is the Python runtime boundary between a Poppy robot and Poppy-Server.
 The repository is being built incrementally. The current baseline contains an Agent
-lifecycle core and a development-only Mock Robot Adapter; it does not connect to
-Poppy-Server, Unitree SDK2, or a physical robot.
+lifecycle core, a development-only Mock Robot Adapter, and a contract-bound
+Poppy-Server client. It does not require a running server, Unitree SDK2, or a physical
+robot for local tests.
 
 ## Requirements
 

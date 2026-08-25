@@ -1,0 +1,186 @@
+"""Small HTTP client for the Poppy-Server Agent endpoints."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from datetime import datetime
+from typing import Any
+from uuid import UUID
+
+import httpx
+
+from poppy_agent.server.config import ServerConfig
+from poppy_agent.server.models import (
+    AgentRegistrationRequest,
+    AgentRegistrationResponse,
+    HeartbeatRequest,
+    HeartbeatResponse,
+)
+
+
+class ServerClientError(RuntimeError):
+    """Base error for safe, non-secret server client failures."""
+
+
+class ServerApiError(ServerClientError):
+    """Raised for a non-success HTTP response."""
+
+    def __init__(self, status_code: int, error_code: str | None) -> None:
+        self.status_code = status_code
+        self.error_code = error_code
+        code = f" ({error_code})" if error_code else ""
+        super().__init__(f"Poppy-Server returned HTTP {status_code}{code}")
+
+
+class ServerTransportError(ServerClientError):
+    """Raised for bounded timeout or connection failures."""
+
+
+class ServerResponseError(ServerClientError):
+    """Raised when a success response does not match the server envelope."""
+
+
+class ServerClient:
+    """Register an Agent and send read-only Robot heartbeat state."""
+
+    def __init__(
+        self,
+        config: ServerConfig,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._config = config
+        self._sleep = sleep
+        self._client = httpx.Client(
+            base_url=config.server_url,
+            headers={"X-Agent-Token": config.agent_token},
+            timeout=httpx.Timeout(
+                connect=config.connect_timeout_seconds,
+                read=config.read_timeout_seconds,
+                write=config.read_timeout_seconds,
+                pool=config.connect_timeout_seconds,
+            ),
+            transport=transport,
+        )
+
+    def register_agent(self, request: AgentRegistrationRequest) -> AgentRegistrationResponse:
+        """Register an Agent and return the server-assigned Agent ID."""
+        data = self._request_data(
+            "POST", "/api/v1/internal/agents/register", request.to_json(), expected_status=201
+        )
+        return AgentRegistrationResponse(
+            agent_id=_uuid_field(data, "agentId"),
+            registered_at=_datetime_field(data, "registeredAt"),
+            accepted_robot_ids=_uuid_list_field(data, "acceptedRobotIds"),
+        )
+
+    def send_heartbeat(self, agent_id: UUID, request: HeartbeatRequest) -> HeartbeatResponse:
+        """Send one heartbeat and return the server acceptance timestamp."""
+        data = self._request_data(
+            "POST",
+            f"/api/v1/internal/agents/{agent_id}/heartbeat",
+            request.to_json(),
+            expected_status=200,
+        )
+        return HeartbeatResponse(
+            agent_id=_uuid_field(data, "agentId"),
+            accepted_at=_datetime_field(data, "acceptedAt"),
+        )
+
+    def close(self) -> None:
+        """Close the underlying HTTP connection pool."""
+        self._client.close()
+
+    def __enter__(self) -> ServerClient:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def _request_data(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, object],
+        *,
+        expected_status: int,
+    ) -> dict[str, Any]:
+        response = self._request(method, path, payload)
+        if response.status_code != expected_status:
+            raise ServerApiError(response.status_code, _error_code(response))
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ServerResponseError("Poppy-Server returned malformed JSON") from exc
+
+        if not isinstance(body, dict) or body.get("success") is not True:
+            raise ServerResponseError("Poppy-Server returned an invalid response envelope")
+        data = body.get("data")
+        if not isinstance(data, dict):
+            raise ServerResponseError("Poppy-Server response data is malformed")
+        return data
+
+    def _request(self, method: str, path: str, payload: dict[str, object]) -> httpx.Response:
+        for attempt in range(self._config.max_retries + 1):
+            try:
+                return self._client.request(method, path, json=payload)
+            except httpx.TimeoutException as exc:
+                if attempt < self._config.max_retries:
+                    self._sleep(0.1 * (2**attempt))
+                    continue
+                raise ServerTransportError("Poppy-Server request timed out") from exc
+            except httpx.TransportError as exc:
+                if attempt < self._config.max_retries:
+                    self._sleep(0.1 * (2**attempt))
+                    continue
+                raise ServerTransportError("Poppy-Server connection failed") from exc
+        raise AssertionError("unreachable retry state")
+
+
+def _error_code(response: httpx.Response) -> str | None:
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    error = body.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return code if isinstance(code, str) else None
+
+
+def _uuid_field(data: dict[str, Any], name: str) -> UUID:
+    value = data.get(name)
+    if not isinstance(value, str):
+        raise ServerResponseError("Poppy-Server response UUID is malformed")
+    try:
+        return UUID(value)
+    except ValueError as exc:
+        raise ServerResponseError("Poppy-Server response UUID is malformed") from exc
+
+
+def _uuid_list_field(data: dict[str, Any], name: str) -> tuple[UUID, ...]:
+    value = data.get(name)
+    if not isinstance(value, list):
+        raise ServerResponseError("Poppy-Server response UUID list is malformed")
+    if not all(isinstance(item, str) for item in value):
+        raise ServerResponseError("Poppy-Server response UUID list is malformed")
+    try:
+        return tuple(UUID(item) for item in value)
+    except ValueError as exc:
+        raise ServerResponseError("Poppy-Server response UUID list is malformed") from exc
+
+
+def _datetime_field(data: dict[str, Any], name: str) -> datetime:
+    value = data.get(name)
+    if not isinstance(value, str):
+        raise ServerResponseError("Poppy-Server response timestamp is malformed")
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ServerResponseError("Poppy-Server response timestamp is malformed") from exc

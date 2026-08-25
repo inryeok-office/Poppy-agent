@@ -20,7 +20,7 @@ class MockRobotSpec:
     edition: str = "development"
     firmware_version: str = "mock"
     sdk_version: str = "not-applicable"
-    battery_percent: float | None = 100.0
+    battery_percent: int | None = 100
     current_execution_id: str | None = None
 
     def __post_init__(self) -> None:

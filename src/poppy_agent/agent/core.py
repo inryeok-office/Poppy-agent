@@ -51,12 +51,19 @@ class Agent:
             raise AgentLifecycleError(f"cannot start Agent from state {self.state}")
 
         self.adapter.initialize()
+        self.snapshot = self.read_state()
+        self.state = AgentState.RUNNING
+        return self.snapshot
+
+    def read_state(self) -> AgentSnapshot:
+        """Read and retain the current read-only adapter state."""
+        if self.state is not AgentState.RUNNING and self.state is not AgentState.CREATED:
+            raise AgentLifecycleError(f"cannot read Agent state from state {self.state}")
         self.snapshot = AgentSnapshot(
             identity=self.adapter.identity(),
             status=self.adapter.status(),
             capabilities=self.adapter.capabilities(),
         )
-        self.state = AgentState.RUNNING
         return self.snapshot
 
     def shutdown(self) -> None:
