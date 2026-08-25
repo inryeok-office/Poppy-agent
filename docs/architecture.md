@@ -4,10 +4,12 @@ The repository is intentionally small while the runtime contract is being establ
 
 ```text
 src/poppy_agent/
-└── main.py
+├── config/   environment-backed settings
+├── agent/    lifecycle coordination
+└── robot/    RobotAdapter contract and implementations
 ```
 
-Future layers should be added only when an approved Issue needs them. The planned
-boundaries are configuration, agent lifecycle, robot adapters, and a Poppy-Server
-client. Robot control methods are outside the current automation scope.
-
+The Agent core depends on the `RobotAdapter` contract, not on a concrete robot SDK.
+Phase 2 provides only `MockRobotAdapter`. Poppy-Server client and Unitree integration
+are later boundaries added by separate Issues. Robot control methods are outside the
+current automation scope.
