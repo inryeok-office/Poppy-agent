@@ -16,4 +16,5 @@ in-process HTTP transport to cover request/header mapping, response parsing, nul
 heartbeat fields, HTTP errors, timeout/connection failures, and malformed responses.
 Tests must not require a physical robot, robot network, secret, or a running
 Poppy-Server unless a later Issue explicitly defines a separately controlled
-integration test. Physical movement and posture commands are never test fixtures.
+integration test. Unitree adapter tests use a fake SDK module and never initialize DDS.
+Physical movement and posture commands are never test fixtures.

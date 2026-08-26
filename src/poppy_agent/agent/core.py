@@ -12,6 +12,8 @@ from poppy_agent.robot import (
     RobotAdapter,
     RobotIdentity,
     RobotStatus,
+    UnitreeGo2Adapter,
+    UnitreeGo2Config,
 )
 
 
@@ -77,6 +79,34 @@ class Agent:
 
 def create_agent(config: AgentConfig) -> Agent:
     """Create the adapter selected by validated Phase 2 configuration."""
+    if config.robot_mode == "unitree":
+        required = (
+            config.network_interface,
+            config.robot_model,
+            config.robot_edition,
+            config.robot_firmware_version,
+            config.unitree_sdk_version,
+        )
+        if any(value is None for value in required):
+            raise ValueError("Unitree Agent configuration is incomplete")
+        assert config.network_interface is not None
+        assert config.robot_model is not None
+        assert config.robot_edition is not None
+        assert config.robot_firmware_version is not None
+        assert config.unitree_sdk_version is not None
+        identity = RobotIdentity(
+            robot_id=config.robot_id,
+            model=config.robot_model,
+            edition=config.robot_edition,
+            firmware_version=config.robot_firmware_version,
+            sdk_version=config.unitree_sdk_version,
+        )
+        return Agent(
+            config=config,
+            adapter=UnitreeGo2Adapter(
+                UnitreeGo2Config(network_interface=config.network_interface, identity=identity)
+            ),
+        )
     if config.robot_mode != "mock":
         raise ValueError(f"unsupported robot mode: {config.robot_mode}")
     return Agent(config=config, adapter=MockRobotAdapter(MockRobotSpec(robot_id=config.robot_id)))
