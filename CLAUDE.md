@@ -42,3 +42,11 @@ Before commit and push, run the harness check, `ruff check .`, `ruff format --ch
 `mypy`, and `pytest`. A failing check must be fixed or reported; it must not be hidden.
 Keep documentation and tests aligned with every behavior change.
 
+## Language and encoding
+
+- Commit subject, PR title/body, Issue text, review explanations, and development
+  documents use Korean by default.
+- Conventional Commit `type(scope)`, code identifiers, paths, API names, commands,
+  and external product names may remain in their original form.
+- Store repository text files as UTF-8 without a BOM. Do not submit GitHub text that
+  contains `?`, `??`, `U+FFFD`, or other encoding replacement artifacts.

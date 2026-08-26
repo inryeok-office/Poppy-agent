@@ -25,6 +25,18 @@ REQUIRED_FILES = (
     ".github/workflows/ci.yml",
 )
 
+TEXT_SUFFIXES = {
+    ".example",
+    ".md",
+    ".ps1",
+    ".py",
+    ".sh",
+    ".toml",
+    ".yaml",
+    ".yml",
+}
+TEXT_FILENAMES = {".gitattributes", ".gitignore"}
+
 
 def tracked_files(repo_root: Path) -> list[str]:
     result = subprocess.run(
@@ -35,6 +47,31 @@ def tracked_files(repo_root: Path) -> list[str]:
         text=True,
     )
     return result.stdout.splitlines()
+
+
+def is_text_file(relative_path: str) -> bool:
+    path = Path(relative_path)
+    return path.name in TEXT_FILENAMES or path.suffix in TEXT_SUFFIXES
+
+
+def check_text_encoding(repo_root: Path, relative_paths: list[str]) -> list[str]:
+    failures: list[str] = []
+    for relative_path in relative_paths:
+        if not is_text_file(relative_path):
+            continue
+
+        path = repo_root / relative_path
+        raw = path.read_bytes()
+        if raw.startswith(b"\xef\xbb\xbf"):
+            failures.append(f"UTF-8 BOM NOT ALLOWED: {relative_path}")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            failures.append(f"NOT UTF-8: {relative_path} ({error})")
+            continue
+        if "\ufffd" in text:
+            failures.append(f"REPLACEMENT CHARACTER FOUND: {relative_path}")
+    return failures
 
 
 def main() -> int:
@@ -55,7 +92,10 @@ def main() -> int:
             if b"\r\n" in path.read_bytes():
                 failures.append(f"NOT LF-ONLY: {path.relative_to(repo_root)}")
 
-    for relative_path in tracked_files(repo_root):
+    tracked = tracked_files(repo_root)
+    failures.extend(check_text_encoding(repo_root, tracked))
+
+    for relative_path in tracked:
         if relative_path == ".env" or (
             relative_path.startswith(".env.") and relative_path != ".env.example"
         ):
