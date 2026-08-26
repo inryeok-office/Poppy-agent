@@ -18,6 +18,11 @@ dev = [
     "pytest>=8,<9",
     "ruff>=0.6,<1",
 ]
+unitree = [
+    "cyclonedds==0.10.2",
+    "numpy",
+    "opencv-python",
+]
 
 [project.scripts]
 poppy-agent = "poppy_agent.main:main"
