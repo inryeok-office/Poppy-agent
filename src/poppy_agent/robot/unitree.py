@@ -65,7 +65,7 @@ class UnitreeGo2Adapter:
 
     def capabilities(self) -> tuple[str, ...]:
         self._require_initialized()
-        return ("telemetry",)
+        return ("TELEMETRY",)
 
     def shutdown(self) -> None:
         """Close only the read-only subscriber; no SDK command is sent."""
