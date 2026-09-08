@@ -95,7 +95,7 @@ def test_adapter_uses_official_read_only_subscription_shape(monkeypatch) -> None
     assert status.operational_status == "UNAVAILABLE"
     assert status.battery_percent is None
     assert status.current_execution_id is None
-    assert adapter.capabilities() == ("telemetry",)
+    assert adapter.capabilities() == ("TELEMETRY",)
 
     adapter.shutdown()
     assert calls["closed"] is True
