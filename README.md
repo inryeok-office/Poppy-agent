@@ -2,9 +2,9 @@
 
 Poppy-Agent is the Python runtime boundary between a Poppy robot and Poppy-Server.
 The repository is being built incrementally. The current baseline contains an Agent
-lifecycle core, a development-only Mock Robot Adapter, and a contract-bound
-Poppy-Server client. It does not require a running server, Unitree SDK2, or a physical
-robot for local tests.
+lifecycle core, Mock and read-only Unitree Robot Adapters, and a contract-bound
+Poppy-Server client. The runtime entry point loads its configuration from the
+environment and keeps the Agent registered with periodic heartbeats.
 
 ## Requirements
 
@@ -24,12 +24,14 @@ python -m pip install -e ".[dev]"
 python -m poppy_agent.main
 ```
 
-Copy `.env.example` to a local, untracked `.env` only when a later phase needs
-configuration. Never commit tokens, robot addresses, or other site-specific values.
+Copy `.env.example` to a local, untracked `.env` and export its values before starting
+the runtime. The application intentionally does not load `.env` automatically; use
+your shell or deployment environment to provide the variables. Never commit tokens,
+robot addresses, or other site-specific values.
 
-Phase 2 configuration requires `ROBOT_MODE=mock` and an explicit
-`POPPY_ROBOT_ID`. The mock adapter is never selected implicitly for a production
-runtime.
+Configuration names and required values are documented in `.env.example` and
+`docs/configuration.md`. The mock adapter is never selected implicitly for a
+production runtime. `SIGINT` and `SIGTERM` request a graceful runtime shutdown.
 
 ## Verification
 
