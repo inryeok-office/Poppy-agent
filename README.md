@@ -33,6 +33,8 @@ Configuration names and required values are documented in `.env.example` and
 `docs/configuration.md`. The mock adapter is never selected implicitly for a
 production runtime. `SIGINT` and `SIGTERM` request a graceful runtime shutdown.
 
+Ubuntu systemd 설치와 운영은 `docs/deployment.md`를 참고한다.
+
 ## Verification
 
 ```bash

@@ -1,0 +1,19 @@
+[Unit]
+Description=Poppy-Agent runtime
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=poppy
+WorkingDirectory=/home/poppy/projects/Poppy-agent
+EnvironmentFile=/etc/poppy-agent/poppy-agent.env
+ExecStart=/home/poppy/projects/Poppy-agent/.venv/bin/python -m poppy_agent.main
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
