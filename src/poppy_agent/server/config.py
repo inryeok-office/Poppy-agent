@@ -23,6 +23,7 @@ class ServerConfig:
     sdk_version: str
     platform: str
     heartbeat_interval_seconds: float = 30.0
+    execution_poll_interval_seconds: float = 1.0
     connect_timeout_seconds: float = 5.0
     read_timeout_seconds: float = 10.0
     max_retries: int = 1
@@ -44,6 +45,8 @@ class ServerConfig:
                 raise ServerConfigurationError(f"{name} is required")
         if self.heartbeat_interval_seconds <= 0:
             raise ServerConfigurationError("heartbeat interval must be positive")
+        if self.execution_poll_interval_seconds <= 0:
+            raise ServerConfigurationError("execution poll interval must be positive")
         if self.connect_timeout_seconds <= 0 or self.read_timeout_seconds <= 0:
             raise ServerConfigurationError("server timeouts must be positive")
         if self.max_retries < 0:
@@ -63,6 +66,9 @@ class ServerConfig:
             platform=values.get("POPPY_AGENT_PLATFORM", "").strip(),
             heartbeat_interval_seconds=_float_value(
                 values, "POPPY_HEARTBEAT_INTERVAL_SECONDS", 30.0
+            ),
+            execution_poll_interval_seconds=_float_value(
+                values, "POPPY_EXECUTION_POLL_INTERVAL_SECONDS", 1.0
             ),
             connect_timeout_seconds=_float_value(
                 values, "POPPY_SERVER_CONNECT_TIMEOUT_SECONDS", 5.0
