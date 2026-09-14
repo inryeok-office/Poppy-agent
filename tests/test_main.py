@@ -22,6 +22,7 @@ class FakeRuntime:
 
     def __init__(self, agent: object, server: object, config: object) -> None:
         self.calls: list[str] = []
+        self.executors: list[object] = []
         self.__class__.instances.append(self)
 
     def start(self) -> FakeRegistration:
@@ -34,6 +35,11 @@ class FakeRuntime:
         self.calls.append("run_heartbeat_loop")
         if self.loop_error is not None:
             raise self.loop_error
+        stop_event.set()
+
+    def run_loop(self, stop_event: Event, executor: object) -> None:
+        self.calls.append("run_loop")
+        self.executors.append(executor)
         stop_event.set()
 
     def shutdown(self) -> None:
@@ -116,3 +122,31 @@ def test_main_does_not_print_token_on_unexpected_error(
 
     assert main_module.main() == 1
     assert "secret" not in capsys.readouterr().err
+
+
+def test_main_wires_mock_executor_only_for_mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    patch_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        main_module.AgentConfig,
+        "from_environment",
+        classmethod(lambda cls: type("MockConfig", (), {"robot_mode": "mock"})()),
+    )
+
+    assert main_module.main() == 0
+    assert FakeRuntime.instances[0].calls == ["start", "run_loop", "shutdown"]
+    assert isinstance(FakeRuntime.instances[0].executors[0], main_module.MockExecutionExecutor)
+
+
+def test_main_keeps_unitree_mode_on_heartbeat_without_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_dependencies(monkeypatch)
+    monkeypatch.setattr(
+        main_module.AgentConfig,
+        "from_environment",
+        classmethod(lambda cls: type("UnitreeConfig", (), {"robot_mode": "unitree"})()),
+    )
+
+    assert main_module.main() == 0
+    assert FakeRuntime.instances[0].calls == ["start", "run_heartbeat_loop", "shutdown"]
+    assert FakeRuntime.instances[0].executors == []
