@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from math import isfinite
 from urllib.parse import urlparse
 
 
@@ -43,11 +44,19 @@ class ServerConfig:
         ):
             if not value.strip():
                 raise ServerConfigurationError(f"{name} is required")
-        if self.heartbeat_interval_seconds <= 0:
+        if not isfinite(self.heartbeat_interval_seconds) or self.heartbeat_interval_seconds <= 0:
             raise ServerConfigurationError("heartbeat interval must be positive")
-        if self.execution_poll_interval_seconds <= 0:
+        if (
+            not isfinite(self.execution_poll_interval_seconds)
+            or self.execution_poll_interval_seconds <= 0
+        ):
             raise ServerConfigurationError("execution poll interval must be positive")
-        if self.connect_timeout_seconds <= 0 or self.read_timeout_seconds <= 0:
+        if (
+            not isfinite(self.connect_timeout_seconds)
+            or not isfinite(self.read_timeout_seconds)
+            or self.connect_timeout_seconds <= 0
+            or self.read_timeout_seconds <= 0
+        ):
             raise ServerConfigurationError("server timeouts must be positive")
         if self.max_retries < 0:
             raise ServerConfigurationError("max retries must not be negative")

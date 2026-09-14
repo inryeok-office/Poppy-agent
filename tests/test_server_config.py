@@ -50,13 +50,14 @@ def test_server_config_requires_token_and_valid_url() -> None:
 
 
 def test_server_config_rejects_non_positive_execution_poll_interval() -> None:
-    with pytest.raises(ServerConfigurationError, match="execution poll interval"):
-        ServerConfig(
-            server_url="https://server.example.test",
-            agent_token="dummy-agent-token",
-            agent_name="agent",
-            agent_version="0.1.0",
-            sdk_version="mock",
-            platform="test",
-            execution_poll_interval_seconds=0,
-        )
+    for interval in (0, float("nan"), float("inf")):
+        with pytest.raises(ServerConfigurationError, match="execution poll interval"):
+            ServerConfig(
+                server_url="https://server.example.test",
+                agent_token="dummy-agent-token",
+                agent_name="agent",
+                agent_version="0.1.0",
+                sdk_version="mock",
+                platform="test",
+                execution_poll_interval_seconds=interval,
+            )

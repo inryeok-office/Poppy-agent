@@ -78,7 +78,7 @@ class RecordingServer:
 
 
 def runtime_with_recording_server(
-    server: RecordingServer, *, poll_interval: float = 1.0
+    server: RecordingServer, *, poll_interval: float = 1.0, heartbeat_interval: float = 30.0
 ) -> AgentServerRuntime:
     config = ServerConfig(
         server_url="https://server.example.test",
@@ -87,7 +87,7 @@ def runtime_with_recording_server(
         agent_version="0.1.0",
         sdk_version="not-applicable",
         platform="test",
-        heartbeat_interval_seconds=30,
+        heartbeat_interval_seconds=heartbeat_interval,
         execution_poll_interval_seconds=poll_interval,
     )
     agent = create_agent(AgentConfig(robot_mode="mock", robot_id=ROBOT_ID))
@@ -376,7 +376,11 @@ def test_execution_result_identity_mismatch_is_rejected() -> None:
         )
     runtime.shutdown()
 
-    assert server.status_reports == [ServerExecutionReportStatus.RUNNING]
+    assert server.status_reports == [
+        ServerExecutionReportStatus.RUNNING,
+        ServerExecutionReportStatus.FAILED,
+    ]
+    assert runtime.active_execution_id is None
 
 
 def test_heartbeat_uses_active_execution_and_omits_idle_execution_field() -> None:
@@ -424,3 +428,33 @@ def test_run_loop_schedules_heartbeat_and_execution_poll_separately() -> None:
     assert server.events[:3] == ["register", "heartbeat", "fetch"]
     assert stop_event.waits
     assert 0 < stop_event.waits[0] <= 1
+
+
+def test_run_loop_keeps_heartbeat_and_stop_responsive_while_executor_blocks() -> None:
+    server = RecordingServer([assigned_delivery()])
+    runtime = runtime_with_recording_server(server, poll_interval=0.01, heartbeat_interval=0.01)
+    runtime.start()
+    executor_started = Event()
+    release_executor = Event()
+
+    class BlockingExecutor:
+        def execute(self, task: ExecutionTask) -> ExecutionResult:
+            executor_started.set()
+            release_executor.wait()
+            return ExecutionResult(task.execution_id, ExecutionStatus.COMPLETED)
+
+    class StopAfterSecondHeartbeat(Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            super().wait(min(timeout or 0.005, 0.005))
+            if len(server.heartbeat_requests) >= 2:
+                self.set()
+            return self.is_set()
+
+    stop_event = StopAfterSecondHeartbeat()
+    runtime.run_loop(stop_event, BlockingExecutor())
+    assert executor_started.is_set()
+    assert len(server.heartbeat_requests) >= 2
+    assert runtime.active_execution_id == EXECUTION_ID
+
+    release_executor.set()
+    runtime.shutdown()
