@@ -16,6 +16,7 @@ from poppy_agent.server import (
     ServerResponseError,
     ServerTransportError,
 )
+from poppy_agent.server.models import ServerExecutionDelivery
 
 ROBOT_ID = UUID("00000000-0000-0000-0000-000000000001")
 AGENT_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -193,3 +194,174 @@ def test_connection_failure_and_malformed_response_are_reported() -> None:
     with pytest.raises(ServerResponseError, match="malformed JSON"):
         client.register_agent(registration_request())
     client.close()
+
+
+def test_fetch_next_execution_maps_assigned_delivery_and_request() -> None:
+    execution_id = UUID("00000000-0000-0000-0000-000000000003")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == f"/api/v1/internal/agents/{AGENT_ID}/executions/next"
+        assert request.url.params["robotId"] == str(ROBOT_ID)
+        assert request.headers["X-Agent-Token"] == "dummy-agent-token"
+        assert request.content == b""
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "execution": {
+                        "executionId": str(execution_id),
+                        "robotId": str(ROBOT_ID),
+                        "status": "ASSIGNED",
+                        "protocolVersion": 1,
+                    }
+                },
+                "error": None,
+            },
+        )
+
+    client = client_for(handler)
+    delivery = client.fetch_next_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+    assert delivery == ServerExecutionDelivery(
+        execution_id=execution_id,
+        robot_id=ROBOT_ID,
+        status="ASSIGNED",
+        protocol_version=1,
+    )
+
+
+def test_fetch_next_execution_returns_none_when_no_work_is_available() -> None:
+    client = client_for(
+        lambda _: httpx.Response(
+            200, json={"success": True, "data": {"execution": None}, "error": None}
+        )
+    )
+
+    assert client.fetch_next_execution(AGENT_ID, ROBOT_ID) is None
+    client.close()
+
+
+@pytest.mark.parametrize(
+    ("execution", "message"),
+    [
+        (
+            {
+                "executionId": "not-a-uuid",
+                "robotId": str(ROBOT_ID),
+                "status": "ASSIGNED",
+                "protocolVersion": 1,
+            },
+            "UUID",
+        ),
+        (
+            {
+                "executionId": str(AGENT_ID),
+                "robotId": str(ROBOT_ID),
+                "status": "QUEUED",
+                "protocolVersion": 1,
+            },
+            "status",
+        ),
+        (
+            {
+                "executionId": str(AGENT_ID),
+                "robotId": str(ROBOT_ID),
+                "status": "ASSIGNED",
+                "protocolVersion": 2,
+            },
+            "protocol version",
+        ),
+    ],
+)
+def test_fetch_next_execution_rejects_invalid_delivery(
+    execution: dict[str, object], message: str
+) -> None:
+    client = client_for(
+        lambda _: httpx.Response(
+            200, json={"success": True, "data": {"execution": execution}, "error": None}
+        )
+    )
+
+    with pytest.raises(ServerResponseError, match=message):
+        client.fetch_next_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+
+def test_fetch_next_execution_rejects_delivery_for_a_different_robot() -> None:
+    other_robot_id = UUID("00000000-0000-0000-0000-000000000004")
+    client = client_for(
+        lambda _: httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "execution": {
+                        "executionId": str(AGENT_ID),
+                        "robotId": str(other_robot_id),
+                        "status": "ASSIGNED",
+                        "protocolVersion": 1,
+                    }
+                },
+                "error": None,
+            },
+        )
+    )
+
+    with pytest.raises(ServerResponseError, match="robot identity"):
+        client.fetch_next_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"success": True, "data": {}, "error": None},
+        {"success": True, "data": {"execution": []}, "error": None},
+        {"success": False, "data": {"execution": None}, "error": None},
+    ],
+)
+def test_fetch_next_execution_rejects_malformed_envelope(body: dict[str, object]) -> None:
+    client = client_for(lambda _: httpx.Response(200, json=body))
+
+    with pytest.raises(ServerResponseError):
+        client.fetch_next_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+
+@pytest.mark.parametrize("status_code", [401, 404, 409, 500])
+def test_fetch_next_execution_preserves_http_error_contract(status_code: int) -> None:
+    client = client_for(
+        lambda _: httpx.Response(
+            status_code,
+            json={"success": False, "data": None, "error": {"code": "SERVER_ERROR"}},
+        )
+    )
+
+    with pytest.raises(ServerApiError) as raised:
+        client.fetch_next_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+    assert raised.value.status_code == status_code
+    assert "dummy-agent-token" not in str(raised.value)
+
+
+def test_fetch_next_execution_retries_timeout_then_reports_safe_error() -> None:
+    calls = 0
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("test timeout", request=request)
+
+    client = client_for(handler, max_retries=1, sleep=delays.append)
+    with pytest.raises(ServerTransportError, match="timed out") as raised:
+        client.fetch_next_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+    assert calls == 2
+    assert delays == [0.1]
+    assert "dummy-agent-token" not in str(raised.value)
