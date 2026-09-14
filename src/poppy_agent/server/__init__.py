@@ -15,6 +15,8 @@ from poppy_agent.server.models import (
     HeartbeatResponse,
     HeartbeatRobotRequest,
     RobotRegistrationRequest,
+    ServerExecutionReportStatus,
+    ServerExecutionStatusResponse,
 )
 from poppy_agent.server.runtime import AgentServerRuntime, AgentServerRuntimeError
 
@@ -32,6 +34,8 @@ __all__ = [
     "ServerClientError",
     "ServerConfig",
     "ServerConfigurationError",
+    "ServerExecutionReportStatus",
+    "ServerExecutionStatusResponse",
     "ServerResponseError",
     "ServerTransportError",
 ]

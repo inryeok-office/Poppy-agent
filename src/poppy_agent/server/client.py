@@ -17,6 +17,8 @@ from poppy_agent.server.models import (
     HeartbeatRequest,
     HeartbeatResponse,
     ServerExecutionDelivery,
+    ServerExecutionReportStatus,
+    ServerExecutionStatusResponse,
 )
 
 
@@ -43,7 +45,7 @@ class ServerResponseError(ServerClientError):
 
 
 class ServerClient:
-    """Register an Agent and send read-only Robot heartbeat state."""
+    """Call the Poppy-Server Agent registration, heartbeat, and execution APIs."""
 
     def __init__(
         self,
@@ -127,6 +129,42 @@ class ServerClient:
             robot_id=delivery_robot_id,
             status=status,
             protocol_version=protocol_version,
+        )
+
+    def report_execution_status(
+        self,
+        agent_id: UUID,
+        execution_id: UUID,
+        robot_id: UUID,
+        status: ServerExecutionReportStatus | str,
+    ) -> ServerExecutionStatusResponse:
+        """Report one execution status and validate the server identity response."""
+        report_status = _execution_report_status(status)
+        data = self._request_data(
+            "POST",
+            f"/api/v1/internal/agents/{agent_id}/executions/{execution_id}/status",
+            expected_status=200,
+            payload={"robotId": str(robot_id), "status": report_status.value},
+        )
+        response_execution_id = _uuid_field(data, "executionId")
+        response_robot_id = _uuid_field(data, "robotId")
+        response_status = _execution_report_status(data.get("status"))
+        if response_execution_id != execution_id:
+            raise ServerResponseError(
+                "Poppy-Server execution response identity does not match request"
+            )
+        if response_robot_id != robot_id:
+            raise ServerResponseError(
+                "Poppy-Server execution response robot does not match request"
+            )
+        if response_status != report_status:
+            raise ServerResponseError(
+                "Poppy-Server execution response status does not match request"
+            )
+        return ServerExecutionStatusResponse(
+            execution_id=response_execution_id,
+            robot_id=response_robot_id,
+            status=response_status,
         )
 
     def close(self) -> None:
@@ -239,3 +277,12 @@ def _int_field(data: dict[str, Any], name: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ServerResponseError("Poppy-Server response integer is malformed")
     return value
+
+
+def _execution_report_status(value: object) -> ServerExecutionReportStatus:
+    if not isinstance(value, str):
+        raise ServerResponseError("Poppy-Server execution report status is unsupported")
+    try:
+        return ServerExecutionReportStatus(value)
+    except ValueError as exc:
+        raise ServerResponseError("Poppy-Server execution report status is unsupported") from exc

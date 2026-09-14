@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import UUID
 
 
@@ -122,3 +123,20 @@ class ServerExecutionDelivery:
     robot_id: UUID
     status: str
     protocol_version: int
+
+
+class ServerExecutionReportStatus(StrEnum):
+    """Execution statuses supported by the server status-report contract."""
+
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+@dataclass(frozen=True, slots=True)
+class ServerExecutionStatusResponse:
+    """Validated status-report response data returned by the server."""
+
+    execution_id: UUID
+    robot_id: UUID
+    status: ServerExecutionReportStatus

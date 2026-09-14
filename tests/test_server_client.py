@@ -13,6 +13,8 @@ from poppy_agent.server import (
     ServerApiError,
     ServerClient,
     ServerConfig,
+    ServerExecutionReportStatus,
+    ServerExecutionStatusResponse,
     ServerResponseError,
     ServerTransportError,
 )
@@ -20,6 +22,7 @@ from poppy_agent.server.models import ServerExecutionDelivery
 
 ROBOT_ID = UUID("00000000-0000-0000-0000-000000000001")
 AGENT_ID = UUID("00000000-0000-0000-0000-000000000002")
+EXECUTION_ID = UUID("00000000-0000-0000-0000-000000000003")
 
 
 def client_for(handler, *, max_retries: int = 0, sleep=None) -> ServerClient:
@@ -365,3 +368,185 @@ def test_fetch_next_execution_retries_timeout_then_reports_safe_error() -> None:
     assert calls == 2
     assert delays == [0.1]
     assert "dummy-agent-token" not in str(raised.value)
+
+
+def status_response(
+    status: ServerExecutionReportStatus | str,
+    *,
+    execution_id: UUID = EXECUTION_ID,
+    robot_id: UUID = ROBOT_ID,
+) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "success": True,
+            "data": {
+                "executionId": str(execution_id),
+                "robotId": str(robot_id),
+                "status": str(status),
+            },
+            "error": None,
+        },
+    )
+
+
+@pytest.mark.parametrize("status", list(ServerExecutionReportStatus))
+def test_report_execution_status_maps_request_and_response(
+    status: ServerExecutionReportStatus,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert (
+            request.url.path
+            == f"/api/v1/internal/agents/{AGENT_ID}/executions/{EXECUTION_ID}/status"
+        )
+        assert request.headers["X-Agent-Token"] == "dummy-agent-token"
+        assert json.loads(request.content) == {
+            "robotId": str(ROBOT_ID),
+            "status": status.value,
+        }
+        return status_response(status)
+
+    client = client_for(handler)
+    response = client.report_execution_status(AGENT_ID, EXECUTION_ID, ROBOT_ID, status)
+    client.close()
+
+    assert response == ServerExecutionStatusResponse(
+        execution_id=EXECUTION_ID,
+        robot_id=ROBOT_ID,
+        status=status,
+    )
+
+
+def test_report_execution_status_rejects_unsupported_request_status_without_transport() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return status_response("QUEUED")
+
+    client = client_for(handler)
+    with pytest.raises(ServerResponseError, match="unsupported"):
+        client.report_execution_status(AGENT_ID, EXECUTION_ID, ROBOT_ID, "QUEUED")
+    client.close()
+
+    assert calls == 0
+
+
+@pytest.mark.parametrize("status_code", [401, 404, 409, 500])
+def test_report_execution_status_preserves_http_error_and_hides_token(status_code: int) -> None:
+    client = client_for(
+        lambda _: httpx.Response(
+            status_code,
+            json={
+                "success": False,
+                "data": None,
+                "error": {
+                    "code": "STATUS_ERROR",
+                    "message": "dummy-agent-token must not be exposed",
+                },
+            },
+        )
+    )
+
+    with pytest.raises(ServerApiError) as raised:
+        client.report_execution_status(
+            AGENT_ID, EXECUTION_ID, ROBOT_ID, ServerExecutionReportStatus.RUNNING
+        )
+    client.close()
+
+    assert raised.value.status_code == status_code
+    assert "dummy-agent-token" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "not-json",
+        {"success": True, "data": None, "error": None},
+        {"success": True, "data": {}, "error": None},
+        {
+            "success": True,
+            "data": {
+                "executionId": "not-a-uuid",
+                "robotId": str(ROBOT_ID),
+                "status": "RUNNING",
+            },
+            "error": None,
+        },
+    ],
+)
+def test_report_execution_status_rejects_malformed_response(body: object) -> None:
+    response = httpx.Response(200, text=body if isinstance(body, str) else None, json=None)
+    if not isinstance(body, str):
+        response = httpx.Response(200, json=body)
+    client = client_for(lambda _: response)
+
+    with pytest.raises(ServerResponseError):
+        client.report_execution_status(
+            AGENT_ID, EXECUTION_ID, ROBOT_ID, ServerExecutionReportStatus.RUNNING
+        )
+    client.close()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("executionId", str(AGENT_ID), "identity"),
+        ("robotId", str(AGENT_ID), "robot"),
+        ("status", "FAILED", "status"),
+    ],
+)
+def test_report_execution_status_rejects_mismatched_response(
+    field: str, value: str, message: str
+) -> None:
+    response_body = {
+        "success": True,
+        "data": {
+            "executionId": str(EXECUTION_ID),
+            "robotId": str(ROBOT_ID),
+            "status": "RUNNING",
+        },
+        "error": None,
+    }
+    response_body["data"][field] = value
+    client = client_for(lambda _: httpx.Response(200, json=response_body))
+
+    with pytest.raises(ServerResponseError, match=message):
+        client.report_execution_status(
+            AGENT_ID, EXECUTION_ID, ROBOT_ID, ServerExecutionReportStatus.RUNNING
+        )
+    client.close()
+
+
+def test_report_execution_status_retries_timeout_then_reports_safe_error() -> None:
+    calls = 0
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("test timeout", request=request)
+
+    client = client_for(handler, max_retries=1, sleep=delays.append)
+    with pytest.raises(ServerTransportError, match="timed out"):
+        client.report_execution_status(
+            AGENT_ID, EXECUTION_ID, ROBOT_ID, ServerExecutionReportStatus.RUNNING
+        )
+    client.close()
+
+    assert calls == 2
+    assert delays == [0.1]
+
+
+def test_report_execution_status_connection_failure_is_safe() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("test connection failure", request=request)
+
+    client = client_for(handler)
+    with pytest.raises(ServerTransportError, match="connection failed"):
+        client.report_execution_status(
+            AGENT_ID, EXECUTION_ID, ROBOT_ID, ServerExecutionReportStatus.RUNNING
+        )
+    client.close()
