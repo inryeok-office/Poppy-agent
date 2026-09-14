@@ -112,3 +112,13 @@ class HeartbeatResponse:
 
     agent_id: UUID
     accepted_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ServerExecutionDelivery:
+    """Execution delivery data returned by the server polling endpoint."""
+
+    execution_id: UUID
+    robot_id: UUID
+    status: str
+    protocol_version: int

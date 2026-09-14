@@ -16,6 +16,7 @@ from poppy_agent.server.models import (
     AgentRegistrationResponse,
     HeartbeatRequest,
     HeartbeatResponse,
+    ServerExecutionDelivery,
 )
 
 
@@ -68,7 +69,10 @@ class ServerClient:
     def register_agent(self, request: AgentRegistrationRequest) -> AgentRegistrationResponse:
         """Register an Agent and return the server-assigned Agent ID."""
         data = self._request_data(
-            "POST", "/api/v1/internal/agents/register", request.to_json(), expected_status=201
+            "POST",
+            "/api/v1/internal/agents/register",
+            expected_status=201,
+            payload=request.to_json(),
         )
         return AgentRegistrationResponse(
             agent_id=_uuid_field(data, "agentId"),
@@ -81,12 +85,43 @@ class ServerClient:
         data = self._request_data(
             "POST",
             f"/api/v1/internal/agents/{agent_id}/heartbeat",
-            request.to_json(),
             expected_status=200,
+            payload=request.to_json(),
         )
         return HeartbeatResponse(
             agent_id=_uuid_field(data, "agentId"),
             accepted_at=_datetime_field(data, "acceptedAt"),
+        )
+
+    def fetch_next_execution(
+        self, agent_id: UUID, robot_id: UUID
+    ) -> ServerExecutionDelivery | None:
+        """Fetch an assigned execution, or return None when no work is available."""
+        data = self._request_data(
+            "GET",
+            f"/api/v1/internal/agents/{agent_id}/executions/next",
+            expected_status=200,
+            params={"robotId": str(robot_id)},
+        )
+        if "execution" not in data:
+            raise ServerResponseError("Poppy-Server execution response is malformed")
+        execution = data["execution"]
+        if execution is None:
+            return None
+        if not isinstance(execution, dict):
+            raise ServerResponseError("Poppy-Server execution response is malformed")
+
+        status = execution.get("status")
+        if status != "ASSIGNED":
+            raise ServerResponseError("Poppy-Server execution status is unsupported")
+        protocol_version = _int_field(execution, "protocolVersion")
+        if protocol_version != 1:
+            raise ServerResponseError("Poppy-Server execution protocol version is unsupported")
+        return ServerExecutionDelivery(
+            execution_id=_uuid_field(execution, "executionId"),
+            robot_id=_uuid_field(execution, "robotId"),
+            status=status,
+            protocol_version=protocol_version,
         )
 
     def close(self) -> None:
@@ -103,11 +138,12 @@ class ServerClient:
         self,
         method: str,
         path: str,
-        payload: dict[str, object],
         *,
         expected_status: int,
+        payload: dict[str, object] | None = None,
+        params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        response = self._request(method, path, payload)
+        response = self._request(method, path, payload=payload, params=params)
         if response.status_code != expected_status:
             raise ServerApiError(response.status_code, _error_code(response))
 
@@ -123,10 +159,17 @@ class ServerClient:
             raise ServerResponseError("Poppy-Server response data is malformed")
         return data
 
-    def _request(self, method: str, path: str, payload: dict[str, object]) -> httpx.Response:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, object] | None,
+        params: dict[str, str] | None,
+    ) -> httpx.Response:
         for attempt in range(self._config.max_retries + 1):
             try:
-                return self._client.request(method, path, json=payload)
+                return self._client.request(method, path, json=payload, params=params)
             except httpx.TimeoutException as exc:
                 if attempt < self._config.max_retries:
                     self._sleep(0.1 * (2**attempt))
@@ -184,3 +227,10 @@ def _datetime_field(data: dict[str, Any], name: str) -> datetime:
         return datetime.fromisoformat(value)
     except ValueError as exc:
         raise ServerResponseError("Poppy-Server response timestamp is malformed") from exc
+
+
+def _int_field(data: dict[str, Any], name: str) -> int:
+    value = data.get(name)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ServerResponseError("Poppy-Server response integer is malformed")
+    return value
