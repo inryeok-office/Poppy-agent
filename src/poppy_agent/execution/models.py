@@ -22,7 +22,10 @@ class ExecutionTask:
     protocol_version: int
 
     def __post_init__(self) -> None:
-        if self.protocol_version != SUPPORTED_EXECUTION_PROTOCOL_VERSION:
+        if (
+            type(self.protocol_version) is not int
+            or self.protocol_version != SUPPORTED_EXECUTION_PROTOCOL_VERSION
+        ):
             raise UnsupportedExecutionProtocolError(
                 "unsupported execution protocol version: "
                 f"{self.protocol_version}; supported version is "

@@ -30,12 +30,15 @@ def test_task_accepts_supported_protocol_with_uuid_metadata() -> None:
     assert execution_task.protocol_version == 1
 
 
-def test_task_rejects_unsupported_protocol_version() -> None:
+@pytest.mark.parametrize("protocol_version", [True, 1.0, "1", 2])
+def test_task_rejects_unsupported_or_non_integer_protocol_version(
+    protocol_version: object,
+) -> None:
     with pytest.raises(UnsupportedExecutionProtocolError, match="unsupported execution protocol"):
         ExecutionTask(
             execution_id=EXECUTION_ID,
             robot_id=ROBOT_ID,
-            protocol_version=2,
+            protocol_version=protocol_version,  # type: ignore[arg-type]
         )
 
 
