@@ -117,9 +117,14 @@ class ServerClient:
         protocol_version = _int_field(execution, "protocolVersion")
         if protocol_version != 1:
             raise ServerResponseError("Poppy-Server execution protocol version is unsupported")
+        delivery_robot_id = _uuid_field(execution, "robotId")
+        if delivery_robot_id != robot_id:
+            raise ServerResponseError(
+                "Poppy-Server execution robot identity does not match request"
+            )
         return ServerExecutionDelivery(
             execution_id=_uuid_field(execution, "executionId"),
-            robot_id=_uuid_field(execution, "robotId"),
+            robot_id=delivery_robot_id,
             status=status,
             protocol_version=protocol_version,
         )

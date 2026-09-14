@@ -290,6 +290,31 @@ def test_fetch_next_execution_rejects_invalid_delivery(
     client.close()
 
 
+def test_fetch_next_execution_rejects_delivery_for_a_different_robot() -> None:
+    other_robot_id = UUID("00000000-0000-0000-0000-000000000004")
+    client = client_for(
+        lambda _: httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "execution": {
+                        "executionId": str(AGENT_ID),
+                        "robotId": str(other_robot_id),
+                        "status": "ASSIGNED",
+                        "protocolVersion": 1,
+                    }
+                },
+                "error": None,
+            },
+        )
+    )
+
+    with pytest.raises(ServerResponseError, match="robot identity"):
+        client.fetch_next_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+
 @pytest.mark.parametrize(
     "body",
     [
