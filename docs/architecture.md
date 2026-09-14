@@ -10,12 +10,12 @@ src/poppy_agent/
 ```
 
 The Agent core depends on the `RobotAdapter` contract, not on a concrete robot SDK.
-Phase 2 provides only `MockRobotAdapter`. Poppy-Server client and Unitree integration
-are later boundaries added by separate Issues. Robot control methods are outside the
-current automation scope.
+The mock adapter and Poppy-Server transport are available for deterministic runtime
+tests. Unitree remains a read-only telemetry boundary; Robot control methods are
+outside the current automation scope.
 
-Execution assignment transport is a future integration boundary. Once transport has
-validated assignment status, it may map metadata to `ExecutionTask`, pass it to an
-`ExecutionExecutor`, and use the returned final `ExecutionResult`. The current core
-provides only a deterministic `MockExecutionExecutor`; it is not connected to the
-runtime and does not control a robot.
+Execution assignment transport maps validated assignment metadata to `ExecutionTask`.
+In mock mode, the runtime reports `RUNNING`, passes the task to the deterministic
+`MockExecutionExecutor`, and reports the returned final `ExecutionResult`. Unitree
+mode keeps execution disabled until a safe robot execution adapter is implemented;
+the current integration does not control a robot.

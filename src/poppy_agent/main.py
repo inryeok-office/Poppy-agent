@@ -10,6 +10,7 @@ from types import FrameType
 
 from poppy_agent.agent import create_agent
 from poppy_agent.config import AgentConfig, ConfigurationError
+from poppy_agent.execution import MockExecutionExecutor
 from poppy_agent.server import (
     AgentServerRuntime,
     AgentServerRuntimeError,
@@ -40,14 +41,21 @@ def main() -> int:
         agent = create_agent(agent_config)
         server = ServerClient(server_config)
         runtime = AgentServerRuntime(agent, server, server_config)
+        executor = (
+            MockExecutionExecutor() if getattr(agent_config, "robot_mode", None) == "mock" else None
+        )
 
         stop_event = Event()
         register_signal_handlers(stop_event)
 
         registration = runtime.start()
         print(f"Agent registered: {registration.agent_id}")
-        print("Heartbeat loop started")
-        runtime.run_heartbeat_loop(stop_event)
+        if executor is None:
+            print("Heartbeat loop started")
+            runtime.run_heartbeat_loop(stop_event)
+        else:
+            print("Heartbeat and execution loop started")
+            runtime.run_loop(stop_event, executor)
         return 0
     except (ConfigurationError, ServerConfigurationError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
