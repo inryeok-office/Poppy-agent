@@ -74,6 +74,7 @@ def test_register_maps_request_header_and_response() -> None:
                     "agentId": str(AGENT_ID),
                     "registeredAt": "2026-08-25T10:20:30",
                     "acceptedRobotIds": [str(ROBOT_ID)],
+                    "agentToken": "issued-agent-token",
                 },
                 "error": None,
             },
@@ -84,6 +85,7 @@ def test_register_maps_request_header_and_response() -> None:
     client.close()
 
     assert response.agent_id == AGENT_ID
+    assert response.agent_token == "issued-agent-token"
     assert response.accepted_robot_ids == (ROBOT_ID,)
     assert response.registered_at == datetime(2026, 8, 25, 10, 20, 30)
 

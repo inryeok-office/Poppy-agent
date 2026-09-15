@@ -76,11 +76,14 @@ class ServerClient:
             expected_status=201,
             payload=request.to_json(),
         )
-        return AgentRegistrationResponse(
+        response = AgentRegistrationResponse(
             agent_id=_uuid_field(data, "agentId"),
             registered_at=_datetime_field(data, "registeredAt"),
             accepted_robot_ids=_uuid_list_field(data, "acceptedRobotIds"),
+            agent_token=_string_field(data, "agentToken"),
         )
+        self._client.headers["X-Agent-Token"] = response.agent_token
+        return response
 
     def send_heartbeat(self, agent_id: UUID, request: HeartbeatRequest) -> HeartbeatResponse:
         """Send one heartbeat and return the server acceptance timestamp."""
@@ -260,6 +263,13 @@ def _uuid_list_field(data: dict[str, Any], name: str) -> tuple[UUID, ...]:
         return tuple(UUID(item) for item in value)
     except ValueError as exc:
         raise ServerResponseError("Poppy-Server response UUID list is malformed") from exc
+
+
+def _string_field(data: dict[str, Any], name: str) -> str:
+    value = data.get(name)
+    if not isinstance(value, str) or not value:
+        raise ServerResponseError("Poppy-Server response string is malformed")
+    return value
 
 
 def _datetime_field(data: dict[str, Any], name: str) -> datetime:

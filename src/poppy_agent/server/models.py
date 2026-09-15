@@ -55,6 +55,7 @@ class AgentRegistrationResponse:
     agent_id: UUID
     registered_at: datetime
     accepted_robot_ids: tuple[UUID, ...]
+    agent_token: str
 
 
 @dataclass(frozen=True, slots=True)

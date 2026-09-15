@@ -43,6 +43,7 @@ class RecordingServer:
             agent_id=AGENT_ID,
             registered_at=datetime(2026, 8, 25, 10, 20, 30),
             accepted_robot_ids=(UUID(ROBOT_ID),),
+            agent_token="issued-agent-token",
         )
 
     def send_heartbeat(self, _agent_id: UUID, request: HeartbeatRequest) -> HeartbeatResponse:
@@ -134,10 +135,12 @@ def test_runtime_registers_mock_robot_and_sends_heartbeat() -> None:
                         "agentId": str(AGENT_ID),
                         "registeredAt": "2026-08-25T10:20:30",
                         "acceptedRobotIds": [ROBOT_ID],
+                        "agentToken": "issued-agent-token",
                     },
                     "error": None,
                 },
             )
+        assert request.headers["X-Agent-Token"] == "issued-agent-token"
         return httpx.Response(
             200,
             json={
