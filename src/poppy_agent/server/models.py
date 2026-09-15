@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
@@ -55,7 +55,7 @@ class AgentRegistrationResponse:
     agent_id: UUID
     registered_at: datetime
     accepted_robot_ids: tuple[UUID, ...]
-    agent_token: str
+    agent_token: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)

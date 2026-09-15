@@ -86,8 +86,32 @@ def test_register_maps_request_header_and_response() -> None:
 
     assert response.agent_id == AGENT_ID
     assert response.agent_token == "issued-agent-token"
+    assert "issued-agent-token" not in repr(response)
     assert response.accepted_robot_ids == (ROBOT_ID,)
     assert response.registered_at == datetime(2026, 8, 25, 10, 20, 30)
+
+
+def test_register_preserves_bootstrap_token_for_legacy_server_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-Agent-Token"] == "dummy-agent-token"
+        return httpx.Response(
+            201,
+            json={
+                "success": True,
+                "data": {
+                    "agentId": str(AGENT_ID),
+                    "registeredAt": "2026-08-25T10:20:30",
+                    "acceptedRobotIds": [str(ROBOT_ID)],
+                },
+                "error": None,
+            },
+        )
+
+    client = client_for(handler)
+    response = client.register_agent(registration_request())
+    client.close()
+
+    assert response.agent_token is None
 
 
 def test_heartbeat_preserves_nullable_and_omitted_execution_fields() -> None:
