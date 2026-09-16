@@ -3,6 +3,7 @@
 from poppy_agent.execution.executor import (
     CommandExecutionTarget,
     ExecutionExecutor,
+    ExecutionTargetError,
     MockCommandEvent,
     MockCommandTarget,
     MockExecutionExecutor,
@@ -26,6 +27,7 @@ __all__ = [
     "CommandSafetyPolicy",
     "ExecutionSafetyValidator",
     "ExecutionExecutor",
+    "ExecutionTargetError",
     "ExecutionResult",
     "ExecutionStatus",
     "ExecutionTask",

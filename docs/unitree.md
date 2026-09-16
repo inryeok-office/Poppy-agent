@@ -38,3 +38,23 @@ documented read-only source proves a stronger state.
 This environment has no installed Unitree SDK, CycloneDDS runtime, or physical Go2.
 Hardware validation status: **NOT TESTED ON HARDWARE**.
 
+## Future command integration boundary
+
+Telemetry and command execution remain separate concerns:
+
+```text
+Read-only UnitreeGo2Adapter telemetry
+    -> separate concern
+CommandExecutionTarget
+    ->
+HardwareCommandPort
+    ->
+FakeHardwareBackend (current phase)
+    ->
+Real Unitree backend (future, disabled)
+```
+
+The current fake backend records hardware-neutral typed intents in memory and can
+inject deterministic failures for tests. It does not import the Unitree SDK or
+open a network, socket, or DDS publisher. `UnitreeGo2Adapter` remains read-only,
+and Unitree production execution remains disabled.
