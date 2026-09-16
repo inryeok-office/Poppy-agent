@@ -9,8 +9,14 @@ from time import monotonic
 from uuid import UUID
 
 from poppy_agent.agent import Agent, AgentSnapshot
-from poppy_agent.command import HighLevelCommandProtocolParser
-from poppy_agent.execution import ExecutionExecutor, ExecutionResult, ExecutionStatus, ExecutionTask
+from poppy_agent.command import CommandProtocolParseError, HighLevelCommandProtocolParser
+from poppy_agent.execution import (
+    ExecutionExecutor,
+    ExecutionResult,
+    ExecutionStatus,
+    ExecutionTask,
+    UnsupportedExecutionProtocolError,
+)
 from poppy_agent.server.client import ServerClient
 from poppy_agent.server.config import ServerConfig
 from poppy_agent.server.models import (
@@ -20,6 +26,7 @@ from poppy_agent.server.models import (
     HeartbeatResponse,
     HeartbeatRobotRequest,
     RobotRegistrationRequest,
+    ServerExecutionDelivery,
     ServerExecutionReportStatus,
 )
 
@@ -149,13 +156,17 @@ class AgentServerRuntime:
             raise AgentServerRuntimeError("Execution delivery robot identity does not match Agent")
         if delivery.status != "ASSIGNED":
             raise AgentServerRuntimeError("Execution delivery status is not ASSIGNED")
-        command_program = HighLevelCommandProtocolParser().parse(delivery.command_payload)
-        task = ExecutionTask(
-            execution_id=delivery.execution_id,
-            robot_id=delivery.robot_id,
-            protocol_version=delivery.protocol_version,
-            command_program=command_program,
-        )
+        try:
+            command_program = HighLevelCommandProtocolParser().parse(delivery.command_payload)
+            task = ExecutionTask(
+                execution_id=delivery.execution_id,
+                robot_id=delivery.robot_id,
+                protocol_version=delivery.protocol_version,
+                command_program=command_program,
+            )
+        except (CommandProtocolParseError, UnsupportedExecutionProtocolError):
+            self._report_delivery_failed_best_effort(delivery)
+            raise
         self.active_execution_id = task.execution_id
         try:
             self.server.report_execution_status(
@@ -199,6 +210,18 @@ class AgentServerRuntime:
         except Exception:
             return
         self.active_execution_id = None
+
+    def _report_delivery_failed_best_effort(self, delivery: ServerExecutionDelivery) -> None:
+        agent_id = self._registered_agent_id()
+        try:
+            self.server.report_execution_status(
+                agent_id,
+                delivery.execution_id,
+                delivery.robot_id,
+                ServerExecutionReportStatus.FAILED,
+            )
+        except Exception:
+            return
 
     def _registered_agent_id(self) -> UUID:
         if self.agent_id is None:

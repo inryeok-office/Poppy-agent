@@ -233,7 +233,8 @@ def test_execution_rejects_invalid_delivery_metadata(
         runtime.execution_once(lambda _task: None)  # type: ignore[arg-type]
     runtime.shutdown()
 
-    assert server.status_reports == []
+    expected_reports = [] if status == "RUNNING" else [ServerExecutionReportStatus.FAILED]
+    assert server.status_reports == expected_reports
 
 
 def test_execution_success_reports_running_before_completed() -> None:
@@ -309,7 +310,7 @@ def test_execution_rejects_invalid_command_payload_before_running(
     runtime.shutdown()
 
     assert calls == 0
-    assert server.status_reports == []
+    assert server.status_reports == [ServerExecutionReportStatus.FAILED]
     assert runtime.active_execution_id is None
 
 
