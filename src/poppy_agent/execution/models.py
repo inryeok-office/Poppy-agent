@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
 
+from poppy_agent.command.models import HighLevelCommandProgram
+
 SUPPORTED_EXECUTION_PROTOCOL_VERSION = 1
 
 
@@ -20,6 +22,7 @@ class ExecutionTask:
     execution_id: UUID
     robot_id: UUID
     protocol_version: int
+    command_program: HighLevelCommandProgram
 
     def __post_init__(self) -> None:
         if (
@@ -30,6 +33,13 @@ class ExecutionTask:
                 "unsupported execution protocol version: "
                 f"{self.protocol_version}; supported version is "
                 f"{SUPPORTED_EXECUTION_PROTOCOL_VERSION}"
+            )
+        if (
+            not isinstance(self.command_program, HighLevelCommandProgram)
+            or self.command_program.protocol_version != self.protocol_version
+        ):
+            raise UnsupportedExecutionProtocolError(
+                "execution protocol version does not match command program"
             )
 
 

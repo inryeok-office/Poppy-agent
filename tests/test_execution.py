@@ -2,6 +2,7 @@ from uuid import UUID
 
 import pytest
 
+from poppy_agent.command import HighLevelCommandProgram
 from poppy_agent.execution import (
     ExecutionExecutor,
     ExecutionStatus,
@@ -19,6 +20,7 @@ def task() -> ExecutionTask:
         execution_id=EXECUTION_ID,
         robot_id=ROBOT_ID,
         protocol_version=1,
+        command_program=HighLevelCommandProgram(protocol_version=1, commands=()),
     )
 
 
@@ -39,6 +41,7 @@ def test_task_rejects_unsupported_or_non_integer_protocol_version(
             execution_id=EXECUTION_ID,
             robot_id=ROBOT_ID,
             protocol_version=protocol_version,  # type: ignore[arg-type]
+            command_program=HighLevelCommandProgram(protocol_version=1, commands=()),
         )
 
 

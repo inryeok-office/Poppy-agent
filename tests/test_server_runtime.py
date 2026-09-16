@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from poppy_agent.agent import create_agent
+from poppy_agent.command import CommandType, HighLevelCommandProgram, StopParameters
 from poppy_agent.config import AgentConfig
 from poppy_agent.execution import ExecutionResult, ExecutionStatus, ExecutionTask
 from poppy_agent.server import (
@@ -27,6 +28,7 @@ ROBOT_ID = "00000000-0000-0000-0000-000000000001"
 AGENT_ID = UUID("00000000-0000-0000-0000-000000000002")
 EXECUTION_ID = UUID("00000000-0000-0000-0000-000000000003")
 OTHER_EXECUTION_ID = UUID("00000000-0000-0000-0000-000000000004")
+COMMAND_PAYLOAD = '{"protocolVersion":1,"commands":[]}'
 
 
 class RecordingServer:
@@ -95,12 +97,15 @@ def runtime_with_recording_server(
     return AgentServerRuntime(agent, server, config)  # type: ignore[arg-type]
 
 
-def assigned_delivery(execution_id: UUID = EXECUTION_ID) -> ServerExecutionDelivery:
+def assigned_delivery(
+    execution_id: UUID = EXECUTION_ID, command_payload: str = COMMAND_PAYLOAD
+) -> ServerExecutionDelivery:
     return ServerExecutionDelivery(
         execution_id=execution_id,
         robot_id=UUID(ROBOT_ID),
         status="ASSIGNED",
         protocol_version=1,
+        command_payload=command_payload,
     )
 
 
@@ -218,6 +223,7 @@ def test_execution_rejects_invalid_delivery_metadata(
         robot_id=UUID(ROBOT_ID),
         status=status,
         protocol_version=protocol_version,
+        command_payload=COMMAND_PAYLOAD,
     )
     server = RecordingServer([delivery])
     runtime = runtime_with_recording_server(server)
@@ -227,7 +233,8 @@ def test_execution_rejects_invalid_delivery_metadata(
         runtime.execution_once(lambda _task: None)  # type: ignore[arg-type]
     runtime.shutdown()
 
-    assert server.status_reports == []
+    expected_reports = [] if status == "RUNNING" else [ServerExecutionReportStatus.FAILED]
+    assert server.status_reports == expected_reports
 
 
 def test_execution_success_reports_running_before_completed() -> None:
@@ -239,6 +246,8 @@ def test_execution_success_reports_running_before_completed() -> None:
         def execute(self, task: ExecutionTask) -> ExecutionResult:
             server.events.append("execute")
             assert runtime.active_execution_id == EXECUTION_ID
+            assert isinstance(task.command_program, HighLevelCommandProgram)
+            assert task.command_program.commands == ()
             return ExecutionResult(task.execution_id, ExecutionStatus.COMPLETED)
 
     result = runtime.execution_once(SuccessExecutor())
@@ -254,6 +263,54 @@ def test_execution_success_reports_running_before_completed() -> None:
         "report:COMPLETED",
         "close",
     ]
+    assert runtime.active_execution_id is None
+
+
+def test_execution_parses_typed_command_program_before_running() -> None:
+    command_payload = (
+        '{"protocolVersion":1,"commands":['
+        '{"sequence":0,"sourceBlockId":"stop-1","type":"STOP","parameters":{}}]}'
+    )
+    server = RecordingServer([assigned_delivery(command_payload=command_payload)])
+    runtime = runtime_with_recording_server(server)
+    runtime.start()
+
+    class InspectingExecutor:
+        def execute(self, task: ExecutionTask) -> ExecutionResult:
+            assert task.command_program.commands[0].type is CommandType.STOP
+            assert isinstance(task.command_program.commands[0].parameters, StopParameters)
+            return ExecutionResult(task.execution_id, ExecutionStatus.COMPLETED)
+
+    result = runtime.execution_once(InspectingExecutor())
+    runtime.shutdown()
+
+    assert result is not None
+
+
+@pytest.mark.parametrize("command_payload", ["{", '{"protocolVersion":1,"commands":[],"extra":1}'])
+def test_execution_rejects_invalid_command_payload_before_running(
+    command_payload: str,
+) -> None:
+    server = RecordingServer([assigned_delivery(command_payload=command_payload)])
+    runtime = runtime_with_recording_server(server)
+    runtime.start()
+    calls = 0
+
+    def executor(_task: ExecutionTask) -> ExecutionResult:
+        nonlocal calls
+        calls += 1
+        return ExecutionResult(EXECUTION_ID, ExecutionStatus.COMPLETED)
+
+    if command_payload == "{":
+        with pytest.raises(ValueError, match="malformed"):
+            runtime.execution_once(executor)
+    else:
+        with pytest.raises(ValueError):
+            runtime.execution_once(executor)
+    runtime.shutdown()
+
+    assert calls == 0
+    assert server.status_reports == [ServerExecutionReportStatus.FAILED]
     assert runtime.active_execution_id is None
 
 
