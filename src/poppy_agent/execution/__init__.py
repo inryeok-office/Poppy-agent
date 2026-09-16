@@ -1,6 +1,7 @@
 """Transport-independent execution core."""
 
 from poppy_agent.execution.executor import (
+    CommandExecutionTarget,
     ExecutionExecutor,
     MockCommandEvent,
     MockCommandTarget,
@@ -13,9 +14,17 @@ from poppy_agent.execution.models import (
     ExecutionTask,
     UnsupportedExecutionProtocolError,
 )
+from poppy_agent.execution.safety import (
+    CommandSafetyPolicy,
+    ExecutionSafetyValidator,
+    SafetyValidationError,
+)
 
 __all__ = [
     "SUPPORTED_EXECUTION_PROTOCOL_VERSION",
+    "CommandExecutionTarget",
+    "CommandSafetyPolicy",
+    "ExecutionSafetyValidator",
     "ExecutionExecutor",
     "ExecutionResult",
     "ExecutionStatus",
@@ -23,5 +32,6 @@ __all__ = [
     "MockCommandEvent",
     "MockCommandTarget",
     "MockExecutionExecutor",
+    "SafetyValidationError",
     "UnsupportedExecutionProtocolError",
 ]

@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol
+from uuid import UUID
 
 from poppy_agent.command import CommandType, HighLevelCommand
 from poppy_agent.command.models import CommandParameters
 from poppy_agent.execution.models import ExecutionResult, ExecutionStatus, ExecutionTask
+from poppy_agent.execution.safety import (
+    CommandSafetyPolicy,
+    ExecutionSafetyValidator,
+    SafetyValidationError,
+)
 
 
 class ExecutionExecutor(Protocol):
@@ -15,6 +21,16 @@ class ExecutionExecutor(Protocol):
 
     def execute(self, task: ExecutionTask) -> ExecutionResult:
         """Execute a task without imposing a transport or robot implementation."""
+
+
+class CommandExecutionTarget(Protocol):
+    """Target contract for typed command support and dispatch."""
+
+    def supports(self, command_type: CommandType) -> bool:
+        """Return whether this target can execute a command type."""
+
+    def dispatch(self, command: HighLevelCommand) -> bool:
+        """Dispatch one already-validated command and report STOP termination."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +48,10 @@ class MockCommandTarget:
 
     def __init__(self) -> None:
         self.events: list[MockCommandEvent] = []
+
+    def supports(self, _command_type: CommandType) -> bool:
+        """Support every protocol command as trace-only Mock behavior."""
+        return True
 
     def dispatch(self, command: HighLevelCommand) -> bool:
         """Record one command and return whether it requests program termination."""
@@ -55,10 +75,17 @@ class MockExecutionExecutor:
         *,
         fail_execution: bool = False,
         fail_at_sequence: int | None = None,
+        safety_policy: CommandSafetyPolicy | None = None,
+        bound_robot_id: UUID | None = None,
     ) -> None:
         self.target = target or MockCommandTarget()
         self._fail_execution = fail_execution
         self._fail_at_sequence = fail_at_sequence
+        self._safety_validator = ExecutionSafetyValidator(
+            self.target,
+            policy=safety_policy or CommandSafetyPolicy.for_mock_trace(),
+            bound_robot_id=bound_robot_id,
+        )
 
     @property
     def events(self) -> list[MockCommandEvent]:
@@ -72,6 +99,15 @@ class MockExecutionExecutor:
                 execution_id=task.execution_id,
                 status=ExecutionStatus.FAILED,
                 failure_reason="configured mock execution failure",
+            )
+
+        try:
+            self._safety_validator.validate(task)
+        except SafetyValidationError as exc:
+            return ExecutionResult(
+                execution_id=task.execution_id,
+                status=ExecutionStatus.FAILED,
+                failure_reason=str(exc),
             )
 
         for command in task.command_program.commands:

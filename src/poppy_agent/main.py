@@ -7,6 +7,7 @@ import sys
 from signal import Signals
 from threading import Event
 from types import FrameType
+from uuid import UUID
 
 from poppy_agent.agent import create_agent
 from poppy_agent.config import AgentConfig, ConfigurationError
@@ -41,9 +42,7 @@ def main() -> int:
         agent = create_agent(agent_config)
         server = ServerClient(server_config)
         runtime = AgentServerRuntime(agent, server, server_config)
-        executor = (
-            MockExecutionExecutor() if getattr(agent_config, "robot_mode", None) == "mock" else None
-        )
+        executor = _create_mock_executor(agent_config)
 
         stop_event = Event()
         register_signal_handlers(stop_event)
@@ -70,6 +69,14 @@ def main() -> int:
         if runtime is not None:
             runtime.shutdown()
             print("Agent stopped")
+
+
+def _create_mock_executor(config: AgentConfig) -> MockExecutionExecutor | None:
+    if getattr(config, "robot_mode", None) != "mock":
+        return None
+    raw_robot_id = getattr(config, "robot_id", None)
+    bound_robot_id = UUID(raw_robot_id) if isinstance(raw_robot_id, str) else None
+    return MockExecutionExecutor(bound_robot_id=bound_robot_id)
 
 
 if __name__ == "__main__":

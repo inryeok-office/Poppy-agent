@@ -26,3 +26,10 @@ the local verification suite because it requires a running Poppy-Server and
 PostgreSQL. Run it only against an ephemeral localhost environment with
 `python scripts/full_mock_e2e.py`; see [`full-mock-e2e.md`](full-mock-e2e.md) for
 the prerequisites, safety guard, fixture, and success criteria.
+
+## Command Safety Validation
+
+`ExecutionSafetyValidator` is covered by local tests using only mock targets. The
+tests verify target support preflight, robot binding, PRESET fail-closed behavior,
+trace-only Mock PRESET behavior, and the existing STOP/lifecycle regressions. No
+physical Robot or Unitree command API is initialized.

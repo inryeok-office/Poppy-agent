@@ -17,11 +17,15 @@ from poppy_agent.command import (
     WaitParameters,
 )
 from poppy_agent.execution import (
+    CommandSafetyPolicy,
     ExecutionExecutor,
+    ExecutionSafetyValidator,
     ExecutionStatus,
     ExecutionTask,
     MockCommandEvent,
+    MockCommandTarget,
     MockExecutionExecutor,
+    SafetyValidationError,
     UnsupportedExecutionProtocolError,
 )
 
@@ -206,3 +210,94 @@ def test_configured_failure_does_not_dispatch_commands() -> None:
 
     assert result.status is ExecutionStatus.FAILED
     assert executor.events == []
+
+
+def test_safety_validator_rejects_robot_binding_mismatch() -> None:
+    validator = ExecutionSafetyValidator(
+        MockCommandTarget(),
+        bound_robot_id=EXECUTION_ID,
+        policy=CommandSafetyPolicy.for_mock_trace(),
+    )
+
+    with pytest.raises(SafetyValidationError, match="does not match Agent binding"):
+        validator.validate(task())
+
+
+def test_safety_validator_rejects_task_and_program_protocol_mismatch() -> None:
+    execution_task = task()
+    object.__setattr__(
+        execution_task,
+        "command_program",
+        HighLevelCommandProgram(protocol_version=2, commands=()),
+    )
+    validator = ExecutionSafetyValidator(MockCommandTarget())
+
+    with pytest.raises(
+        SafetyValidationError,
+        match="does not match command program",
+    ):
+        validator.validate(execution_task)
+
+
+def test_safety_validator_preflights_all_commands_before_dispatch() -> None:
+    class UnsupportedMoveTarget(MockCommandTarget):
+        def supports(self, command_type: CommandType) -> bool:
+            return command_type is not CommandType.MOVE
+
+    target = UnsupportedMoveTarget()
+    executor = MockExecutionExecutor(target)
+    commands = program(
+        command(0, "wait", CommandType.WAIT, WaitParameters(0.0)),
+        command(
+            1,
+            "move",
+            CommandType.MOVE,
+            MoveParameters(MoveDirection.FORWARD, 1.0),
+        ),
+    )
+
+    result = executor.execute(task(commands))
+
+    assert result.status is ExecutionStatus.FAILED
+    assert result.failure_reason == "execution target does not support command type MOVE"
+    assert target.events == []
+
+
+def test_safety_validator_fails_closed_for_unconfigured_preset_policy() -> None:
+    validator = ExecutionSafetyValidator(MockCommandTarget())
+    preset_program = program(command(0, "preset", CommandType.PRESET, PresetParameters("demo")))
+
+    with pytest.raises(
+        SafetyValidationError,
+        match="PRESET execution is disabled until an explicit allow-list is configured",
+    ):
+        validator.validate(task(preset_program))
+
+
+def test_safety_validator_rejects_malformed_typed_parameters() -> None:
+    validator = ExecutionSafetyValidator(
+        MockCommandTarget(),
+        policy=CommandSafetyPolicy.for_mock_trace(),
+    )
+    malformed_program = program(
+        command(
+            0,
+            "wait",
+            CommandType.WAIT,
+            MoveParameters(MoveDirection.FORWARD, 1.0),
+        )
+    )
+
+    with pytest.raises(SafetyValidationError, match="not a valid typed parameter model"):
+        validator.validate(task(malformed_program))
+
+
+def test_mock_executor_keeps_preset_as_trace_only_behavior() -> None:
+    executor = MockExecutionExecutor()
+
+    result = executor.execute(
+        task(program(command(0, "preset", CommandType.PRESET, PresetParameters("demo"))))
+    )
+
+    assert result.status is ExecutionStatus.COMPLETED
+    assert executor.events[0].parameters == PresetParameters("demo")
