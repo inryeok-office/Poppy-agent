@@ -156,7 +156,6 @@ typed intents and supports deterministic failure injection, but it does not open
 network or invoke a Unitree API. Its presence does not authorize physical command
 execution.
 
-<<<<<<< HEAD
 `UnitreeCommandBackend` preserves the same boundary. It rejects Poppy MOVE/TURN
 until a separately reviewed execution strategy resolves the distance/angle versus
 velocity semantics, rejects PRESET without explicit policy, and handles program
