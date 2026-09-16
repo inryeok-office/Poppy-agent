@@ -1,0 +1,53 @@
+{
+  "protocolVersion": 1,
+  "commands": [
+    {
+      "sequence": 0,
+      "sourceBlockId": "wait-1",
+      "type": "WAIT",
+      "parameters": {
+        "durationSeconds": 1.5
+      }
+    },
+    {
+      "sequence": 1,
+      "sourceBlockId": "move-1",
+      "type": "MOVE",
+      "parameters": {
+        "direction": "FORWARD",
+        "distanceMeters": 1.0
+      }
+    },
+    {
+      "sequence": 2,
+      "sourceBlockId": "turn-1",
+      "type": "TURN",
+      "parameters": {
+        "direction": "LEFT",
+        "angleDegrees": 90.0
+      }
+    },
+    {
+      "sequence": 3,
+      "sourceBlockId": "stop-1",
+      "type": "STOP",
+      "parameters": {}
+    },
+    {
+      "sequence": 4,
+      "sourceBlockId": "posture-1",
+      "type": "POSTURE",
+      "parameters": {
+        "posture": "SIT"
+      }
+    },
+    {
+      "sequence": 5,
+      "sourceBlockId": "preset-1",
+      "type": "PRESET",
+      "parameters": {
+        "presetCode": "documented-example"
+      }
+    }
+  ]
+}
