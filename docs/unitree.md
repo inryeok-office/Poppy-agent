@@ -49,7 +49,11 @@ CommandExecutionTarget
     ->
 HardwareCommandPort
     ->
-FakeHardwareBackend (current phase)
+MotionExecutionStrategy (MOVE/TURN only, explicit profile)
+    ->
+UnitreeCommandBackend
+    ->
+FakeUnitreeCommandClient (current phase)
     ->
 Real Unitree backend (future, disabled)
 ```
@@ -58,6 +62,20 @@ The current fake backend records hardware-neutral typed intents in memory and ca
 inject deterministic failures for tests. It does not import the Unitree SDK or
 open a network, socket, or DDS publisher. `UnitreeGo2Adapter` remains read-only,
 and Unitree production execution remains disabled.
+
+## Motion execution strategy
+
+Poppy `MOVE` is distance-in-meters and `TURN` is angle-in-degrees. The official
+Go2 high-level `SportClient.Move(vx, vy, vyaw)` operation is velocity-shaped, so
+the Agent does not perform an implicit distance-to-velocity or angle-to-yaw-rate
+conversion. `MotionExecutionStrategy` requires an explicitly injected
+`MotionProfile` and creates a `MotionPlan` for fake-only deterministic tests.
+Production rates and physical limits have no defaults and remain TBD.
+
+The fake client records the plan and a fake sleeper records the requested duration
+without waiting. No Unitree SDK command object, DDS publisher, or physical robot
+is involved. The real client is not implemented and `ROBOT_MODE=unitree` remains
+execution-disabled.
 
 ## High-level mapping contract (not enabled)
 
@@ -73,8 +91,8 @@ Poppy's current contract deliberately records the following decisions:
 | Poppy command | Client contract | Direct mapping | Decision |
 | --- | --- | --- | --- |
 | WAIT | no client operation | execution-level only | handled without hardware call |
-| MOVE | `Move(vx, vy, vyaw)` shape | no | distance-to-velocity strategy is unresolved; fail closed |
-| TURN | `Move(vx, vy, vyaw)` yaw component | no | angle-to-angular-velocity strategy is unresolved; fail closed |
+| MOVE | `Move(vx, vy, vyaw)` shape | no | explicit fake-only planning is possible; physical distance-to-velocity mapping remains unresolved |
+| TURN | `Move(vx, vy, vyaw)` yaw component | no | explicit fake-only planning is possible; physical angle-to-yaw-rate mapping remains unresolved |
 | STOP | no client operation | no physical mapping | program STOP terminates dispatch; it is not `StopMove` or E-stop |
 | POSTURE/SIT | `Sit`-shaped client operation | contract only | Fake client records the mapping; hardware enablement remains gated |
 | POSTURE/STAND | `StandUp`-shaped client operation | contract only | Fake client records the mapping; hardware enablement remains gated |

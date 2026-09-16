@@ -35,16 +35,21 @@ HighLevelCommandProgram
     -> CommandExecutionTarget
     -> HardwareCommandIntent
     -> HardwareCommandPort
+    -> MotionExecutionStrategy
+    -> MotionPlan
     -> UnitreeCommandBackend
     -> UnitreeCommandClient
     -> FakeUnitreeCommandClient (current test double)
     -> real SDK client (disabled)
 ```
 
-`UnitreeCommandBackend` maps only the explicitly supported cases. It does not
-invent distance/angle conversions for the official velocity-shaped Move operation,
-and it does not map program STOP to physical StopMove. `FakeUnitreeCommandClient`
-is an in-memory test double with call recording and deterministic failure injection;
-it has no SDK, socket, DDS, or robot dependency. `UnitreeGo2Adapter` remains a
+`MotionExecutionStrategy` is the explicit boundary for the unresolved semantic
+conversion between Poppy distance/angle commands and a velocity-shaped SDK
+operation. It requires an injected `MotionProfile` and produces a deterministic
+`MotionPlan`; it has no production defaults and does not perform vendor-specific
+conversion. `UnitreeCommandBackend` maps only explicitly supported cases and does
+not map program STOP to physical `StopMove`. `FakeUnitreeCommandClient` is an
+in-memory test double with call recording and deterministic failure injection; it
+has no SDK, socket, DDS, or robot dependency. `UnitreeGo2Adapter` remains a
 separate read-only telemetry adapter, and this boundary is not wired into
 production Unitree mode.

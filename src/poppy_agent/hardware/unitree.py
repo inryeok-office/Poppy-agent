@@ -12,6 +12,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from poppy_agent.command import CommandType, Posture, PostureParameters
+from poppy_agent.execution.motion import MotionExecutionStrategy, MotionPlan, MotionSleeper
 from poppy_agent.hardware.boundary import HardwareCommandIntent, HardwareCommandPort
 
 
@@ -20,6 +21,7 @@ class UnitreeCommandOperation(StrEnum):
 
     SIT = "Sit"
     STAND_UP = "StandUp"
+    MOVE = "Move"
 
 
 class UnitreeCommandClient(Protocol):
@@ -34,6 +36,9 @@ class UnitreeCommandClient(Protocol):
     def stand_up(self) -> bool:
         """Represent the official Go2 high-level StandUp operation."""
 
+    def execute_motion(self, plan: MotionPlan) -> bool:
+        """Represent a future SDK Move call after strategy planning."""
+
     def shutdown(self) -> None:
         """Release client resources."""
 
@@ -47,6 +52,7 @@ class FakeUnitreeCall:
     """One recorded high-level operation; no SDK object is retained."""
 
     operation: UnitreeCommandOperation
+    parameters: object | None = None
 
 
 class FakeUnitreeCommandClient:
@@ -86,18 +92,26 @@ class FakeUnitreeCommandClient:
         """Record the official StandUp-shaped operation without executing it."""
         return self._record(UnitreeCommandOperation.STAND_UP)
 
+    def execute_motion(self, plan: MotionPlan) -> bool:
+        """Record a planned motion without converting or executing it."""
+        return self._record(UnitreeCommandOperation.MOVE, plan)
+
     def shutdown(self) -> None:
         """Shutdown only the in-memory fake client."""
         self._initialized = False
 
-    def _record(self, operation: UnitreeCommandOperation) -> bool:
+    def _record(
+        self,
+        operation: UnitreeCommandOperation,
+        parameters: object | None = None,
+    ) -> bool:
         if not self._initialized:
             raise UnitreeCommandBackendError("fake Unitree client is not initialized")
         if self._fail_operation is operation:
             raise UnitreeCommandBackendError(
                 f"configured fake Unitree client failure for {operation.value}"
             )
-        self.calls.append(FakeUnitreeCall(operation))
+        self.calls.append(FakeUnitreeCall(operation, parameters))
         return self._operation_result
 
 
@@ -112,8 +126,16 @@ class UnitreeCommandBackend(HardwareCommandPort):
 
     _SUPPORTED_COMMANDS = frozenset({CommandType.WAIT, CommandType.POSTURE, CommandType.STOP})
 
-    def __init__(self, client: UnitreeCommandClient) -> None:
+    def __init__(
+        self,
+        client: UnitreeCommandClient,
+        *,
+        motion_strategy: MotionExecutionStrategy | None = None,
+        sleeper: MotionSleeper | None = None,
+    ) -> None:
         self._client = client
+        self._motion_strategy = motion_strategy
+        self._sleeper = sleeper
         self._initialized = False
 
     @property
@@ -128,7 +150,24 @@ class UnitreeCommandBackend(HardwareCommandPort):
 
     def supports(self, command_type: CommandType) -> bool:
         """Return explicit direct-mapping support only."""
-        return command_type in self._SUPPORTED_COMMANDS
+        if command_type in self._SUPPORTED_COMMANDS:
+            return True
+        return (
+            command_type in {CommandType.MOVE, CommandType.TURN}
+            and self._motion_strategy is not None
+            and self._motion_strategy.configured
+            and self._sleeper is not None
+        )
+
+    def preflight(self, intent: HardwareCommandIntent) -> None:
+        """Plan motion commands before the executor dispatches any command."""
+        if intent.type in {CommandType.MOVE, CommandType.TURN}:
+            if not self.supports(intent.type):
+                raise UnitreeCommandBackendError(
+                    f"Unitree command mapping is unsupported for {intent.type.value}"
+                )
+            assert self._motion_strategy is not None
+            self._motion_strategy.plan(intent)
 
     def dispatch(self, intent: HardwareCommandIntent) -> bool:
         """Dispatch an intent to the client or reject it without fallback."""
@@ -142,6 +181,19 @@ class UnitreeCommandBackend(HardwareCommandPort):
             return False
         if intent.type is CommandType.STOP:
             return True
+        if intent.type in {CommandType.MOVE, CommandType.TURN}:
+            if self._motion_strategy is None or self._sleeper is None:
+                raise UnitreeCommandBackendError(
+                    f"Unitree command mapping is unsupported for {intent.type.value}"
+                )
+            plan = self._motion_strategy.plan(intent)
+            result = self._client.execute_motion(plan)
+            if result is not True:
+                raise UnitreeCommandBackendError(
+                    f"Unitree client reported failure for {intent.type.value}"
+                )
+            self._sleeper.sleep(plan.duration_seconds)
+            return False
         if not isinstance(intent.parameters, PostureParameters):
             raise UnitreeCommandBackendError("POSTURE intent does not have typed parameters")
         if intent.parameters.posture is Posture.SIT:

@@ -15,6 +15,16 @@ from poppy_agent.execution.models import (
     ExecutionTask,
     UnsupportedExecutionProtocolError,
 )
+from poppy_agent.execution.motion import (
+    MotionExecutionStrategy,
+    MotionPlan,
+    MotionProfile,
+    MotionRateUnit,
+    MotionSleeper,
+    MotionStrategyError,
+    MotionUnit,
+    RecordingSleeper,
+)
 from poppy_agent.execution.safety import (
     CommandSafetyPolicy,
     ExecutionSafetyValidator,
@@ -31,9 +41,17 @@ __all__ = [
     "ExecutionResult",
     "ExecutionStatus",
     "ExecutionTask",
+    "MotionExecutionStrategy",
+    "MotionPlan",
+    "MotionProfile",
+    "MotionRateUnit",
+    "MotionSleeper",
+    "MotionStrategyError",
+    "MotionUnit",
     "MockCommandEvent",
     "MockCommandTarget",
     "MockExecutionExecutor",
     "SafetyValidationError",
     "UnsupportedExecutionProtocolError",
+    "RecordingSleeper",
 ]
