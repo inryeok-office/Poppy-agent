@@ -365,7 +365,7 @@ def main() -> int:
             f"{len(parsed_program.commands)} typed commands in immutable snapshot"
         )
 
-        executor = MockExecutionExecutor()
+        executor = MockExecutionExecutor(bound_robot_id=robot_id)
         result = runtime.execution_once(executor)
         _assert(result is not None, "Agent execution_once returned no work after ASSIGNED")
         _assert(result.execution_id == execution_id, "ExecutionResult ID mismatch")

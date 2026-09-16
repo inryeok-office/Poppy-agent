@@ -17,7 +17,8 @@ outside the current automation scope.
 Execution assignment transport maps validated assignment metadata to `ExecutionTask`.
 In mock mode, the runtime reports `RUNNING`, passes the task to the deterministic
 `MockExecutionExecutor`, and reports the returned final `ExecutionResult`. The mock
-executor dispatches each typed command to a trace-only `MockCommandTarget`; `WAIT` is
-a no-op, and `STOP` records itself before ending the program successfully. Unitree
+executor preflights the complete typed program through `ExecutionSafetyValidator`
+before dispatching each command to a trace-only `MockCommandTarget`; `WAIT` is a
+no-op, and `STOP` records itself before ending the program successfully. Unitree
 mode keeps execution disabled until a safe robot execution adapter is implemented;
 the current integration does not control a robot.
