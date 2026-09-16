@@ -35,11 +35,16 @@ HighLevelCommandProgram
     -> CommandExecutionTarget
     -> HardwareCommandIntent
     -> HardwareCommandPort
-    -> FakeHardwareBackend (current test double)
-    -> future vendor backend (disabled)
+    -> UnitreeCommandBackend
+    -> UnitreeCommandClient
+    -> FakeUnitreeCommandClient (current test double)
+    -> real SDK client (disabled)
 ```
 
-`FakeHardwareBackend` is an in-memory test double with explicit support, lifecycle,
-trace, and deterministic failure injection. It has no SDK, socket, DDS, or robot
-dependency. `UnitreeGo2Adapter` remains a separate read-only telemetry adapter;
-this boundary is not wired into production Unitree mode.
+`UnitreeCommandBackend` maps only the explicitly supported cases. It does not
+invent distance/angle conversions for the official velocity-shaped Move operation,
+and it does not map program STOP to physical StopMove. `FakeUnitreeCommandClient`
+is an in-memory test double with call recording and deterministic failure injection;
+it has no SDK, socket, DDS, or robot dependency. `UnitreeGo2Adapter` remains a
+separate read-only telemetry adapter, and this boundary is not wired into
+production Unitree mode.
