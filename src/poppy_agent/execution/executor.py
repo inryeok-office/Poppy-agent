@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID
 
 from poppy_agent.command import CommandType, HighLevelCommand
@@ -21,6 +21,10 @@ class ExecutionExecutor(Protocol):
 
     def execute(self, task: ExecutionTask) -> ExecutionResult:
         """Execute a task without imposing a transport or robot implementation."""
+
+
+class ExecutionTargetError(RuntimeError):
+    """Raised when a command target cannot dispatch a typed command."""
 
 
 class CommandExecutionTarget(Protocol):
@@ -71,7 +75,7 @@ class MockExecutionExecutor:
 
     def __init__(
         self,
-        target: MockCommandTarget | None = None,
+        target: CommandExecutionTarget | None = None,
         *,
         fail_execution: bool = False,
         fail_at_sequence: int | None = None,
@@ -90,7 +94,7 @@ class MockExecutionExecutor:
     @property
     def events(self) -> list[MockCommandEvent]:
         """Expose the target trace for deterministic tests and local inspection."""
-        return self.target.events
+        return cast(list[MockCommandEvent], getattr(self.target, "events", []))
 
     def execute(self, task: ExecutionTask) -> ExecutionResult:
         """Dispatch the program in order and preserve the execution identifier."""
@@ -119,7 +123,15 @@ class MockExecutionExecutor:
                         f"configured mock execution failure at sequence {command.sequence}"
                     ),
                 )
-            if self.target.dispatch(command):
+            try:
+                should_stop = self.target.dispatch(command)
+            except ExecutionTargetError as exc:
+                return ExecutionResult(
+                    execution_id=task.execution_id,
+                    status=ExecutionStatus.FAILED,
+                    failure_reason=f"execution target failed: {exc}",
+                )
+            if should_stop:
                 break
 
         return ExecutionResult(

@@ -11,6 +11,17 @@ HighLevelCommandProgram
     -> ExecutionTarget
 ```
 
+The target-to-hardware boundary is explicit and vendor-neutral:
+
+```text
+ExecutionSafetyValidator
+    -> CommandExecutionTarget
+    -> HardwareCommandIntent
+    -> HardwareCommandPort
+    -> FakeHardwareBackend (tests only)
+    -> real hardware backend (disabled)
+```
+
 This document does not authorize or implement Unitree control, physical movement,
 or a hardware emergency stop.
 
@@ -23,7 +34,7 @@ Web Block JSON
     -> Agent strict parser
     -> typed HighLevelCommandProgram
     -> Agent safety validation
-    -> execution target
+    -> command target and hardware command port
     -> physical robot (disabled in this phase)
 ```
 
@@ -34,6 +45,8 @@ Web Block JSON
   its selected execution target supports the typed command.
 - An execution target must not silently ignore, replace, or downgrade an unsupported
   command.
+- A hardware command port receives only hardware-neutral, typed intents; execution
+  core code must not construct or call vendor SDK objects.
 
 ## Safety Invariants
 
@@ -135,6 +148,11 @@ Physical command execution remains disabled until all of the following are compl
   review are approved by the responsible equipment owner.
 - Unitree SDK integration is tested first with a fake SDK boundary and without
   enabling physical control in the Agent by default.
+
+The current `FakeHardwareBackend` is an inert in-memory test double. It records
+typed intents and supports deterministic failure injection, but it does not open a
+network or invoke a Unitree API. Its presence does not authorize physical command
+execution.
 
 No condition in this document is a substitute for an operator or hardware
 emergency-stop procedure.
