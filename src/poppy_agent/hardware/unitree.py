@@ -28,10 +28,10 @@ class UnitreeCommandClient(Protocol):
     def initialize(self) -> None:
         """Prepare the client without specifying a transport here."""
 
-    def sit(self) -> None:
+    def sit(self) -> bool:
         """Represent the official Go2 high-level Sit operation."""
 
-    def stand_up(self) -> None:
+    def stand_up(self) -> bool:
         """Represent the official Go2 high-level StandUp operation."""
 
     def shutdown(self) -> None:
@@ -57,9 +57,11 @@ class FakeUnitreeCommandClient:
         *,
         fail_initialize: bool = False,
         fail_operation: UnitreeCommandOperation | None = None,
+        operation_result: bool = True,
     ) -> None:
         self._fail_initialize = fail_initialize
         self._fail_operation = fail_operation
+        self._operation_result = operation_result
         self._initialized = False
         self.calls: list[FakeUnitreeCall] = []
 
@@ -76,19 +78,19 @@ class FakeUnitreeCommandClient:
             )
         self._initialized = True
 
-    def sit(self) -> None:
+    def sit(self) -> bool:
         """Record the official Sit-shaped operation without executing it."""
-        self._record(UnitreeCommandOperation.SIT)
+        return self._record(UnitreeCommandOperation.SIT)
 
-    def stand_up(self) -> None:
+    def stand_up(self) -> bool:
         """Record the official StandUp-shaped operation without executing it."""
-        self._record(UnitreeCommandOperation.STAND_UP)
+        return self._record(UnitreeCommandOperation.STAND_UP)
 
     def shutdown(self) -> None:
         """Shutdown only the in-memory fake client."""
         self._initialized = False
 
-    def _record(self, operation: UnitreeCommandOperation) -> None:
+    def _record(self, operation: UnitreeCommandOperation) -> bool:
         if not self._initialized:
             raise UnitreeCommandBackendError("fake Unitree client is not initialized")
         if self._fail_operation is operation:
@@ -96,6 +98,7 @@ class FakeUnitreeCommandClient:
                 f"configured fake Unitree client failure for {operation.value}"
             )
         self.calls.append(FakeUnitreeCall(operation))
+        return self._operation_result
 
 
 class UnitreeCommandBackend(HardwareCommandPort):
@@ -142,9 +145,13 @@ class UnitreeCommandBackend(HardwareCommandPort):
         if not isinstance(intent.parameters, PostureParameters):
             raise UnitreeCommandBackendError("POSTURE intent does not have typed parameters")
         if intent.parameters.posture is Posture.SIT:
-            self._client.sit()
+            result = self._client.sit()
         else:
-            self._client.stand_up()
+            result = self._client.stand_up()
+        if result is not True:
+            raise UnitreeCommandBackendError(
+                f"Unitree client reported failure for {intent.parameters.posture.value}"
+            )
         return False
 
     def shutdown(self) -> None:

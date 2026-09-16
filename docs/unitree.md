@@ -81,8 +81,11 @@ Poppy's current contract deliberately records the following decisions:
 | PRESET | no defined official mapping | no | explicit policy/allow-list required; default unsupported |
 
 The `UnitreeCommandClient` protocol is injected into `UnitreeCommandBackend`.
-Only `FakeUnitreeCommandClient` is implemented in this phase. No real client,
-SDK import, SportClient instance, command publisher, semantic conversion, or
-hardware safety limit is defined.
+It returns a normalized success boolean so the backend never silently ignores a
+client failure. The official SDK source returns an operation status code; a future
+real client must translate that code according to a separately reviewed policy.
+Only `FakeUnitreeCommandClient` is implemented in this phase. No real client, SDK
+import, SportClient instance, command publisher, semantic conversion, or hardware
+safety limit is defined.
 
 Hardware validation status: **NOT TESTED ON HARDWARE**.

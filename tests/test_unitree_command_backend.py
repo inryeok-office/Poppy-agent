@@ -224,6 +224,25 @@ def test_fake_client_failure_propagates_to_failed_execution_result() -> None:
     assert [call.operation for call in client.calls] == [UnitreeCommandOperation.SIT]
 
 
+def test_fake_client_negative_result_propagates_to_failed_execution_result() -> None:
+    client = FakeUnitreeCommandClient(operation_result=False)
+    backend = UnitreeCommandBackend(client)
+    target = HardwareCommandTarget(backend)
+    target.initialize()
+
+    result = MockExecutionExecutor(
+        target,
+        safety_policy=CommandSafetyPolicy(),
+        bound_robot_id=ROBOT_ID,
+    ).execute(task(command(0, CommandType.POSTURE, PostureParameters(Posture.SIT))))
+
+    assert result.status is ExecutionStatus.FAILED
+    assert (
+        result.failure_reason == "execution target failed: Unitree client reported failure for SIT"
+    )
+    assert [call.operation for call in client.calls] == [UnitreeCommandOperation.SIT]
+
+
 def test_unitree_backend_requires_initialization_before_dispatch() -> None:
     client = FakeUnitreeCommandClient()
     backend = UnitreeCommandBackend(client)
