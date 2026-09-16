@@ -59,3 +59,9 @@ readiness is `BLOCKED`; the explicit `POPPY_ENABLE_PHYSICAL_EXECUTION` request c
 override unresolved client, policy, approval, telemetry, observability, or hardware
 validation requirements. See [`physical-readiness.md`](physical-readiness.md) for
 the source-of-truth contract.
+
+Execution cancellation is a separate software lifecycle path. The runtime polls
+Server's authoritative Agent execution status while an executor runs and shares
+an ExecutionCancellationToken with cooperative executors. A Server CANCELLED
+state becomes an Agent CANCELLED result; it is not translated to Program STOP
+or a physical emergency stop. See [`execution-cancellation.md`](execution-cancellation.md).

@@ -48,6 +48,7 @@ class ExecutionStatus(StrEnum):
 
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 @dataclass(frozen=True, slots=True)

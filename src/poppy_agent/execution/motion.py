@@ -18,6 +18,7 @@ from poppy_agent.command import (
     TurnDirection,
     TurnParameters,
 )
+from poppy_agent.execution.cancellation import ExecutionCancellationToken
 
 if TYPE_CHECKING:
     from poppy_agent.hardware.boundary import HardwareCommandIntent
@@ -117,7 +118,11 @@ class MotionExecutionStrategy:
 class MotionSleeper(Protocol):
     """Timing boundary used after a fake motion dispatch."""
 
-    def sleep(self, duration_seconds: float) -> None:
+    def sleep(
+        self,
+        duration_seconds: float,
+        cancellation_token: ExecutionCancellationToken | None = None,
+    ) -> None:
         """Wait for a planned duration; implementations may be non-blocking."""
 
 
@@ -127,7 +132,11 @@ class RecordingSleeper:
     def __init__(self) -> None:
         self.durations: list[float] = []
 
-    def sleep(self, duration_seconds: float) -> None:
+    def sleep(
+        self,
+        duration_seconds: float,
+        cancellation_token: ExecutionCancellationToken | None = None,
+    ) -> None:
         """Record without waiting for wall-clock time."""
         self.durations.append(duration_seconds)
 

@@ -14,6 +14,10 @@ from typing import Protocol
 
 from poppy_agent.command import CommandType, HighLevelCommand
 from poppy_agent.command.models import CommandParameters
+from poppy_agent.execution.cancellation import (
+    ExecutionCancellationToken,
+    ExecutionCancelledError,
+)
 from poppy_agent.execution.executor import ExecutionTargetError
 
 
@@ -151,6 +155,30 @@ class HardwareCommandTarget:
         try:
             result = self._port.dispatch(intent)
         except Exception as exc:
+            if isinstance(exc, ExecutionCancelledError):
+                raise
+            if isinstance(exc, ExecutionTargetError):
+                raise
+            raise ExecutionTargetError(str(exc)) from exc
+        if type(result) is not bool:
+            raise ExecutionTargetError("hardware command port returned a non-boolean result")
+        return result
+
+    def dispatch_with_cancellation(
+        self, command: HighLevelCommand, cancellation_token: ExecutionCancellationToken
+    ) -> bool:
+        """Convert and dispatch while preserving the cancellation boundary."""
+        intent = HardwareCommandIntent.from_command(command)
+        try:
+            dispatch_with_cancellation = getattr(self._port, "dispatch_with_cancellation", None)
+            if callable(dispatch_with_cancellation):
+                result = dispatch_with_cancellation(intent, cancellation_token)
+            else:
+                cancellation_token.raise_if_cancelled()
+                result = self._port.dispatch(intent)
+        except Exception as exc:
+            if isinstance(exc, ExecutionCancelledError):
+                raise
             if isinstance(exc, ExecutionTargetError):
                 raise
             raise ExecutionTargetError(str(exc)) from exc

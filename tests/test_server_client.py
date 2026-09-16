@@ -13,7 +13,9 @@ from poppy_agent.server import (
     ServerApiError,
     ServerClient,
     ServerConfig,
+    ServerExecutionLifecycleStatus,
     ServerExecutionReportStatus,
+    ServerExecutionStateResponse,
     ServerExecutionStatusResponse,
     ServerResponseError,
     ServerTransportError,
@@ -493,6 +495,39 @@ def test_report_execution_status_maps_request_and_response(
         robot_id=ROBOT_ID,
         status=status,
     )
+
+
+def test_get_execution_status_maps_cancellation_contract() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert (
+            request.url.path
+            == f"/api/v1/internal/agents/{AGENT_ID}/executions/{EXECUTION_ID}/status"
+        )
+        assert request.url.params["robotId"] == str(ROBOT_ID)
+        assert request.headers["X-Agent-Token"] == "dummy-agent-token"
+        return status_response(ServerExecutionReportStatus.CANCELLED)
+
+    client = client_for(handler)
+    response = client.get_execution_status(AGENT_ID, EXECUTION_ID, ROBOT_ID)
+    client.close()
+
+    assert response == ServerExecutionStateResponse(
+        execution_id=EXECUTION_ID,
+        robot_id=ROBOT_ID,
+        status=ServerExecutionLifecycleStatus.CANCELLED,
+    )
+
+
+def test_get_execution_status_accepts_assigned_lifecycle_state() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return status_response("ASSIGNED")
+
+    client = client_for(handler)
+    response = client.get_execution_status(AGENT_ID, EXECUTION_ID, ROBOT_ID)
+    client.close()
+
+    assert response.status is ServerExecutionLifecycleStatus.ASSIGNED
 
 
 def test_report_execution_status_rejects_unsupported_request_status_without_transport() -> None:

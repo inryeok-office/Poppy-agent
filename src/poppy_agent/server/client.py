@@ -17,7 +17,9 @@ from poppy_agent.server.models import (
     HeartbeatRequest,
     HeartbeatResponse,
     ServerExecutionDelivery,
+    ServerExecutionLifecycleStatus,
     ServerExecutionReportStatus,
+    ServerExecutionStateResponse,
     ServerExecutionStatusResponse,
 )
 
@@ -175,6 +177,31 @@ class ServerClient:
             status=response_status,
         )
 
+    def get_execution_status(
+        self, agent_id: UUID, execution_id: UUID, robot_id: UUID
+    ) -> ServerExecutionStateResponse:
+        """Read the authoritative status of the Agent's assigned execution."""
+        data = self._request_data(
+            "GET",
+            f"/api/v1/internal/agents/{agent_id}/executions/{execution_id}/status",
+            expected_status=200,
+            params={"robotId": str(robot_id)},
+        )
+        response_execution_id = _uuid_field(data, "executionId")
+        response_robot_id = _uuid_field(data, "robotId")
+        response_status = _execution_status(data.get("status"))
+        if response_execution_id != execution_id:
+            raise ServerResponseError(
+                "Poppy-Server execution response identity does not match request"
+            )
+        if response_robot_id != robot_id:
+            raise ServerResponseError(
+                "Poppy-Server execution response robot does not match request"
+            )
+        return ServerExecutionStateResponse(
+            response_execution_id, response_robot_id, response_status
+        )
+
     def close(self) -> None:
         """Close the underlying HTTP connection pool."""
         self._client.close()
@@ -303,3 +330,12 @@ def _execution_report_status(value: object) -> ServerExecutionReportStatus:
         return ServerExecutionReportStatus(value)
     except ValueError as exc:
         raise ServerResponseError("Poppy-Server execution report status is unsupported") from exc
+
+
+def _execution_status(value: object) -> ServerExecutionLifecycleStatus:
+    if not isinstance(value, str):
+        raise ServerResponseError("Poppy-Server execution status is unsupported")
+    try:
+        return ServerExecutionLifecycleStatus(value)
+    except ValueError as exc:
+        raise ServerResponseError("Poppy-Server execution status is unsupported") from exc
