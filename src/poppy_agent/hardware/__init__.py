@@ -8,6 +8,14 @@ from poppy_agent.hardware.boundary import (
     HardwareCommandPort,
     HardwareCommandTarget,
 )
+from poppy_agent.hardware.unitree import (
+    FakeUnitreeCall,
+    FakeUnitreeCommandClient,
+    UnitreeCommandBackend,
+    UnitreeCommandBackendError,
+    UnitreeCommandClient,
+    UnitreeCommandOperation,
+)
 
 __all__ = [
     "FakeHardwareBackend",
@@ -16,4 +24,10 @@ __all__ = [
     "HardwareCommandIntent",
     "HardwareCommandPort",
     "HardwareCommandTarget",
+    "FakeUnitreeCall",
+    "FakeUnitreeCommandClient",
+    "UnitreeCommandBackend",
+    "UnitreeCommandBackendError",
+    "UnitreeCommandClient",
+    "UnitreeCommandOperation",
 ]
