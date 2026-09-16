@@ -9,6 +9,33 @@ def test_config_loads_explicit_mock_configuration() -> None:
     assert config == AgentConfig(robot_mode="mock", robot_id="test-robot")
 
 
+def test_physical_execution_flag_defaults_to_disabled_and_parses_explicit_boolean() -> None:
+    default_config = AgentConfig.from_environment(
+        {"ROBOT_MODE": "mock", "POPPY_ROBOT_ID": "test-robot"}
+    )
+    enabled_config = AgentConfig.from_environment(
+        {
+            "ROBOT_MODE": "mock",
+            "POPPY_ROBOT_ID": "test-robot",
+            "POPPY_ENABLE_PHYSICAL_EXECUTION": " TRUE ",
+        }
+    )
+
+    assert default_config.enable_physical_execution is False
+    assert enabled_config.enable_physical_execution is True
+
+
+def test_invalid_physical_execution_flag_is_rejected() -> None:
+    with pytest.raises(ConfigurationError, match="POPPY_ENABLE_PHYSICAL_EXECUTION"):
+        AgentConfig.from_environment(
+            {
+                "ROBOT_MODE": "mock",
+                "POPPY_ROBOT_ID": "test-robot",
+                "POPPY_ENABLE_PHYSICAL_EXECUTION": "yes",
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("environment", "message"),
     [

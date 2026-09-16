@@ -77,6 +77,11 @@ without waiting. No Unitree SDK command object, DDS publisher, or physical robot
 is involved. The real client is not implemented and `ROBOT_MODE=unitree` remains
 execution-disabled.
 
+Physical execution readiness is tracked separately in
+[`physical-readiness.md`](physical-readiness.md). The readiness evaluator treats
+the Fake Unitree client and test-only MotionProfile as insufficient evidence, and
+the enablement request remains disabled by default.
+
 ## High-level mapping contract (not enabled)
 
 The official Go2 Python `SportClient` source registers and exposes `Move`,

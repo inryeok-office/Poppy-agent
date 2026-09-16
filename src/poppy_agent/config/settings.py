@@ -17,6 +17,7 @@ class AgentConfig:
 
     robot_mode: str
     robot_id: str
+    enable_physical_execution: bool = False
     network_interface: str | None = None
     robot_model: str | None = None
     robot_edition: str | None = None
@@ -29,6 +30,11 @@ class AgentConfig:
         values = os.environ if environ is None else environ
         robot_mode = values.get("ROBOT_MODE", "").strip().lower()
         robot_id = values.get("POPPY_ROBOT_ID", "").strip()
+        raw_physical_execution = values.get("POPPY_ENABLE_PHYSICAL_EXECUTION", "false")
+        physical_execution_enabled = _parse_bool(
+            raw_physical_execution,
+            "POPPY_ENABLE_PHYSICAL_EXECUTION",
+        )
 
         if not robot_mode:
             raise ConfigurationError("ROBOT_MODE is required")
@@ -52,9 +58,19 @@ class AgentConfig:
         return cls(
             robot_mode=robot_mode,
             robot_id=robot_id,
+            enable_physical_execution=physical_execution_enabled,
             network_interface=unitree_values["UNITREE_NETWORK_INTERFACE"] or None,
             robot_model=unitree_values["POPPY_ROBOT_MODEL"] or None,
             robot_edition=unitree_values["POPPY_ROBOT_EDITION"] or None,
             robot_firmware_version=unitree_values["POPPY_ROBOT_FIRMWARE_VERSION"] or None,
             unitree_sdk_version=unitree_values["UNITREE_SDK_VERSION"] or None,
         )
+
+
+def _parse_bool(value: str, name: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ConfigurationError(f"{name} must be true or false")
