@@ -18,6 +18,8 @@ ExecutionSafetyValidator
     -> CommandExecutionTarget
     -> HardwareCommandIntent
     -> HardwareCommandPort
+    -> MotionExecutionStrategy
+    -> MotionPlan
     -> UnitreeCommandBackend
     -> UnitreeCommandClient
     -> FakeUnitreeCommandClient (tests only)
@@ -71,6 +73,9 @@ Web Block JSON
 10. Credentials and session/Agent tokens are not logged.
 11. If no real execution implementation is available, the Agent does not silently
     fall back to Mock execution.
+12. Distance/angle semantic conversion is never hidden in the parser, validator,
+    or Unitree client; a motion strategy and explicit profile are required.
+13. Motion planning is part of complete preflight, before any target dispatch.
 
 ## STOP Semantics
 
@@ -93,6 +98,11 @@ These are separate concepts:
 unknown, unavailable, or returns anything other than explicit support, validation
 fails. The executor returns a deterministic `FAILED` result with the validation
 reason and leaves the target trace unchanged.
+
+For Unitree-shaped motion, `MotionExecutionStrategy` is invoked during that
+preflight. Missing or invalid profile configuration and unresolved semantic
+mapping fail closed before the first command reaches a client. The strategy has
+no production rate defaults.
 
 The validator has no distance, angle, speed, battery, obstacle, acceleration,
 torque, joint, or latency limits. Such values are not established by this project
@@ -156,10 +166,11 @@ typed intents and supports deterministic failure injection, but it does not open
 network or invoke a Unitree API. Its presence does not authorize physical command
 execution.
 
-`UnitreeCommandBackend` preserves the same boundary. It rejects Poppy MOVE/TURN
-until a separately reviewed execution strategy resolves the distance/angle versus
-velocity semantics, rejects PRESET without explicit policy, and handles program
-STOP without mapping it to a physical stop operation. Only the inert
-`FakeUnitreeCommandClient` is available in this phase.
+`UnitreeCommandBackend` preserves the same boundary. It accepts Poppy MOVE/TURN
+only when an explicit, injected strategy can create a fake-only plan; it does not
+claim that the physical distance/angle versus velocity semantics are resolved.
+It rejects PRESET without explicit policy and handles program STOP without
+mapping it to a physical stop operation. Only the inert `FakeUnitreeCommandClient`
+is available in this phase.
 No condition in this document is a substitute for an operator or hardware
 emergency-stop procedure.

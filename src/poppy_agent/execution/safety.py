@@ -97,6 +97,14 @@ class ExecutionSafetyValidator:
             raise SafetyValidationError(
                 f"execution target does not support command type {command.type.value}"
             )
+        preflight = getattr(self._target, "preflight", None)
+        if callable(preflight):
+            try:
+                preflight(command)
+            except Exception as exc:
+                raise SafetyValidationError(
+                    f"execution target preflight failed for {command.type.value}"
+                ) from exc
 
     def _validate_parameters(self, command: HighLevelCommand) -> None:
         parameters = command.parameters

@@ -139,6 +139,12 @@ class HardwareCommandTarget:
         """Delegate explicit support to the backend boundary."""
         return self._port.supports(command_type) is True
 
+    def preflight(self, command: HighLevelCommand) -> None:
+        """Validate optional backend planning before any dispatch occurs."""
+        preflight = getattr(self._port, "preflight", None)
+        if callable(preflight):
+            preflight(HardwareCommandIntent.from_command(command))
+
     def dispatch(self, command: HighLevelCommand) -> bool:
         """Convert a command to intent and propagate boundary failures."""
         intent = HardwareCommandIntent.from_command(command)
