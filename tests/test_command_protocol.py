@@ -6,10 +6,15 @@ import pytest
 from poppy_agent.command import (
     CommandProtocolParseError,
     CommandType,
+    HighLevelCommand,
+    HighLevelCommandProgram,
     HighLevelCommandProtocolParser,
     MoveDirection,
+    MoveParameters,
     Posture,
+    PostureParameters,
     TurnDirection,
+    TurnParameters,
     serialize_command_program,
 )
 
@@ -41,6 +46,29 @@ def test_round_trip_preserves_typed_program() -> None:
 
     assert reparsed == program
     assert json.loads(serialized) == json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+
+def test_serializer_rejects_mismatched_nested_enum_types() -> None:
+    with pytest.raises(CommandProtocolParseError):
+        serialize_command_program(_program_with_command("MOVE", MoveParameters("LEFT", 1.0)))
+    with pytest.raises(CommandProtocolParseError):
+        serialize_command_program(_program_with_command("TURN", TurnParameters("FORWARD", 90.0)))
+    with pytest.raises(CommandProtocolParseError):
+        serialize_command_program(_program_with_command("POSTURE", PostureParameters("FORWARD")))
+
+
+def _program_with_command(command_type: str, parameters: object) -> HighLevelCommandProgram:
+    return HighLevelCommandProgram(
+        protocol_version=1,
+        commands=(
+            HighLevelCommand(
+                sequence=0,
+                source_block_id="test",
+                type=CommandType(command_type),
+                parameters=parameters,  # type: ignore[arg-type]
+            ),
+        ),
+    )
 
 
 @pytest.mark.parametrize(

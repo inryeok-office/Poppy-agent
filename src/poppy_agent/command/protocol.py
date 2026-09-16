@@ -171,15 +171,21 @@ def _validate_parameters(command: HighLevelCommand) -> None:
         or (
             command.type is CommandType.MOVE
             and isinstance(parameters, MoveParameters)
+            and isinstance(parameters.direction, MoveDirection)
             and _finite_number(parameters.distance_meters)
         )
         or (
             command.type is CommandType.TURN
             and isinstance(parameters, TurnParameters)
+            and isinstance(parameters.direction, TurnDirection)
             and _finite_number(parameters.angle_degrees)
         )
         or (command.type is CommandType.STOP and isinstance(parameters, StopParameters))
-        or (command.type is CommandType.POSTURE and isinstance(parameters, PostureParameters))
+        or (
+            command.type is CommandType.POSTURE
+            and isinstance(parameters, PostureParameters)
+            and isinstance(parameters.posture, Posture)
+        )
         or (
             command.type is CommandType.PRESET
             and isinstance(parameters, PresetParameters)
