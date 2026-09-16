@@ -9,7 +9,12 @@ import pytest
 from poppy_agent.agent import create_agent
 from poppy_agent.command import CommandType, HighLevelCommandProgram, StopParameters
 from poppy_agent.config import AgentConfig
-from poppy_agent.execution import ExecutionResult, ExecutionStatus, ExecutionTask
+from poppy_agent.execution import (
+    ExecutionResult,
+    ExecutionStatus,
+    ExecutionTask,
+    MockExecutionExecutor,
+)
 from poppy_agent.server import (
     AgentRegistrationResponse,
     AgentServerRuntime,
@@ -285,6 +290,33 @@ def test_execution_parses_typed_command_program_before_running() -> None:
     runtime.shutdown()
 
     assert result is not None
+
+
+def test_runtime_executes_typed_program_with_mock_executor_and_reports_completion() -> None:
+    command_payload = (
+        '{"protocolVersion":1,"commands":['
+        '{"sequence":0,"sourceBlockId":"wait-1","type":"WAIT",'
+        '"parameters":{"durationSeconds":30}},'
+        '{"sequence":1,"sourceBlockId":"stop-1","type":"STOP","parameters":{}},'
+        '{"sequence":2,"sourceBlockId":"after-stop","type":"WAIT",'
+        '"parameters":{"durationSeconds":999}}]}'
+    )
+    server = RecordingServer([assigned_delivery(command_payload=command_payload)])
+    runtime = runtime_with_recording_server(server)
+    runtime.start()
+    executor = MockExecutionExecutor()
+
+    result = runtime.execution_once(executor)
+    runtime.shutdown()
+
+    assert result == ExecutionResult(EXECUTION_ID, ExecutionStatus.COMPLETED)
+    assert [event.sequence for event in executor.events] == [0, 1]
+    assert [event.source_block_id for event in executor.events] == ["wait-1", "stop-1"]
+    assert [event.type for event in executor.events] == [CommandType.WAIT, CommandType.STOP]
+    assert server.status_reports == [
+        ServerExecutionReportStatus.RUNNING,
+        ServerExecutionReportStatus.COMPLETED,
+    ]
 
 
 @pytest.mark.parametrize("command_payload", ["{", '{"protocolVersion":1,"commands":[],"extra":1}'])
