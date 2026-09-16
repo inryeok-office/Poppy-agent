@@ -55,6 +55,21 @@ class FullMockE2EError(RuntimeError):
     """Raised when the live Full Mock E2E contract is not satisfied."""
 
 
+class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects so the localhost safety boundary cannot be bypassed."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request:
+        raise FullMockE2EError("HTTP redirects are not allowed by the local E2E harness")
+
+
 @dataclass(frozen=True, slots=True)
 class E2EConfig:
     server_url: str
@@ -94,6 +109,7 @@ class E2EHttpClient:
         self._base_url = base_url
         self._timeout_seconds = timeout_seconds
         self._secret = secret
+        self._opener = urllib.request.build_opener(_RejectRedirectHandler())
 
     def post(
         self,
@@ -157,7 +173,7 @@ class E2EHttpClient:
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
+            with self._opener.open(request, timeout=self._timeout_seconds) as response:
                 status = response.status
                 raw = response.read()
         except urllib.error.HTTPError as exc:
