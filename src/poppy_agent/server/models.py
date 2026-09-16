@@ -133,6 +133,18 @@ class ServerExecutionReportStatus(StrEnum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class ServerExecutionLifecycleStatus(StrEnum):
+    """All lifecycle states returned by the server status endpoint."""
+
+    QUEUED = "QUEUED"
+    ASSIGNED = "ASSIGNED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,3 +154,12 @@ class ServerExecutionStatusResponse:
     execution_id: UUID
     robot_id: UUID
     status: ServerExecutionReportStatus
+
+
+@dataclass(frozen=True, slots=True)
+class ServerExecutionStateResponse:
+    """Authoritative full lifecycle state returned by the server."""
+
+    execution_id: UUID
+    robot_id: UUID
+    status: ServerExecutionLifecycleStatus

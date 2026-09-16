@@ -1,5 +1,11 @@
 """Transport-independent execution core."""
 
+from poppy_agent.execution.cancellation import (
+    CancellationSleeper,
+    ExecutionCancellationToken,
+    ExecutionCancelledError,
+    InterruptibleSleeper,
+)
 from poppy_agent.execution.executor import (
     CommandExecutionTarget,
     ExecutionExecutor,
@@ -43,10 +49,13 @@ from poppy_agent.execution.safety import (
 
 __all__ = [
     "SUPPORTED_EXECUTION_PROTOCOL_VERSION",
+    "CancellationSleeper",
     "CommandExecutionTarget",
     "CommandSafetyPolicy",
     "ExecutionSafetyValidator",
     "ExecutionExecutor",
+    "ExecutionCancellationToken",
+    "ExecutionCancelledError",
     "ExecutionTargetError",
     "ExecutionResult",
     "ExecutionStatus",
@@ -61,6 +70,7 @@ __all__ = [
     "MockCommandEvent",
     "MockCommandTarget",
     "MockExecutionExecutor",
+    "InterruptibleSleeper",
     "SafetyValidationError",
     "UnsupportedExecutionProtocolError",
     "RecordingSleeper",

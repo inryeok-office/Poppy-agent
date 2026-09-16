@@ -12,6 +12,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from poppy_agent.command import CommandType, Posture, PostureParameters
+from poppy_agent.execution.cancellation import ExecutionCancellationToken
 from poppy_agent.execution.motion import MotionExecutionStrategy, MotionPlan, MotionSleeper
 from poppy_agent.hardware.boundary import HardwareCommandIntent, HardwareCommandPort
 
@@ -170,6 +171,20 @@ class UnitreeCommandBackend(HardwareCommandPort):
             self._motion_strategy.plan(intent)
 
     def dispatch(self, intent: HardwareCommandIntent) -> bool:
+        return self._dispatch(intent, None)
+
+    def dispatch_with_cancellation(
+        self, intent: HardwareCommandIntent, cancellation_token: ExecutionCancellationToken
+    ) -> bool:
+        """Dispatch while allowing a planned wait to be interrupted."""
+        cancellation_token.raise_if_cancelled()
+        return self._dispatch(intent, cancellation_token)
+
+    def _dispatch(
+        self,
+        intent: HardwareCommandIntent,
+        cancellation_token: ExecutionCancellationToken | None,
+    ) -> bool:
         """Dispatch an intent to the client or reject it without fallback."""
         if not self._initialized:
             raise UnitreeCommandBackendError("Unitree command backend is not initialized")
@@ -192,7 +207,7 @@ class UnitreeCommandBackend(HardwareCommandPort):
                 raise UnitreeCommandBackendError(
                     f"Unitree client reported failure for {intent.type.value}"
                 )
-            self._sleeper.sleep(plan.duration_seconds)
+            self._sleeper.sleep(plan.duration_seconds, cancellation_token)
             return False
         if not isinstance(intent.parameters, PostureParameters):
             raise UnitreeCommandBackendError("POSTURE intent does not have typed parameters")

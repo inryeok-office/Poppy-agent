@@ -10,6 +10,7 @@ from poppy_agent.agent import create_agent
 from poppy_agent.command import CommandType, HighLevelCommandProgram, StopParameters
 from poppy_agent.config import AgentConfig
 from poppy_agent.execution import (
+    ExecutionCancellationToken,
     ExecutionResult,
     ExecutionStatus,
     ExecutionTask,
@@ -24,7 +25,9 @@ from poppy_agent.server import (
     ServerApiError,
     ServerClient,
     ServerConfig,
+    ServerExecutionLifecycleStatus,
     ServerExecutionReportStatus,
+    ServerExecutionStateResponse,
     ServerExecutionStatusResponse,
 )
 from poppy_agent.server.models import ServerExecutionDelivery
@@ -550,3 +553,63 @@ def test_run_loop_keeps_heartbeat_and_stop_responsive_while_executor_blocks() ->
 
     release_executor.set()
     runtime.shutdown()
+
+
+def test_run_loop_propagates_server_cancellation_to_running_executor() -> None:
+    class CancellableServer(RecordingServer):
+        def __init__(self) -> None:
+            super().__init__([assigned_delivery()])
+            self.status_reads = 0
+            self.stop_event: Event | None = None
+
+        def get_execution_status(
+            self, _agent_id: UUID, _execution_id: UUID, _robot_id: UUID
+        ) -> ServerExecutionStateResponse:
+            self.status_reads += 1
+            status = (
+                ServerExecutionLifecycleStatus.RUNNING
+                if self.status_reads == 1
+                else ServerExecutionLifecycleStatus.CANCELLED
+            )
+            return ServerExecutionStateResponse(EXECUTION_ID, UUID(ROBOT_ID), status)
+
+        def report_execution_status(
+            self,
+            agent_id: UUID,
+            execution_id: UUID,
+            robot_id: UUID,
+            status: ServerExecutionReportStatus,
+        ) -> ServerExecutionStatusResponse:
+            response = super().report_execution_status(agent_id, execution_id, robot_id, status)
+            if status is ServerExecutionReportStatus.CANCELLED and self.stop_event is not None:
+                self.stop_event.set()
+            return response
+
+    server = CancellableServer()
+    runtime = runtime_with_recording_server(server, poll_interval=0.01, heartbeat_interval=1.0)
+    runtime.start()
+    stop_event = Event()
+    server.stop_event = stop_event
+    executor_started = Event()
+
+    class CancellableExecutor:
+        def execute(
+            self,
+            task: ExecutionTask,
+            cancellation_token: ExecutionCancellationToken | None = None,
+        ) -> ExecutionResult:
+            assert cancellation_token is not None
+            executor_started.set()
+            while not cancellation_token.is_cancelled():
+                Event().wait(0.01)
+            return ExecutionResult(task.execution_id, ExecutionStatus.CANCELLED)
+
+    runtime.run_loop(stop_event, CancellableExecutor())
+    runtime.shutdown()
+
+    assert executor_started.is_set()
+    assert server.status_reports == [
+        ServerExecutionReportStatus.RUNNING,
+        ServerExecutionReportStatus.CANCELLED,
+    ]
+    assert runtime.active_execution_id is None

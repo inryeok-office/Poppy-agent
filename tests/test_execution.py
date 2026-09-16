@@ -18,19 +18,31 @@ from poppy_agent.command import (
 )
 from poppy_agent.execution import (
     CommandSafetyPolicy,
+    ExecutionCancellationToken,
     ExecutionExecutor,
     ExecutionSafetyValidator,
     ExecutionStatus,
     ExecutionTask,
+    InterruptibleSleeper,
     MockCommandEvent,
     MockCommandTarget,
     MockExecutionExecutor,
     SafetyValidationError,
     UnsupportedExecutionProtocolError,
 )
+from poppy_agent.execution import cancellation as cancellation_module
 
 EXECUTION_ID = UUID("00000000-0000-0000-0000-000000000001")
 ROBOT_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+
+def test_interruptible_sleeper_uses_wall_clock_without_token(monkeypatch) -> None:
+    durations: list[float] = []
+    monkeypatch.setattr(cancellation_module.time, "sleep", durations.append)
+
+    InterruptibleSleeper().sleep(1.25)
+
+    assert durations == [1.25]
 
 
 def task(program: HighLevelCommandProgram | None = None) -> ExecutionTask:
@@ -210,6 +222,66 @@ def test_configured_failure_does_not_dispatch_commands() -> None:
 
     assert result.status is ExecutionStatus.FAILED
     assert executor.events == []
+
+
+def test_mock_executor_returns_cancelled_without_dispatching_when_token_is_set() -> None:
+    token = ExecutionCancellationToken()
+    token.cancel("server requested cancellation")
+    executor = MockExecutionExecutor()
+
+    result = executor.execute(
+        task(program(command(0, "stop", CommandType.STOP, StopParameters()))),
+        cancellation_token=token,
+    )
+
+    assert result.status is ExecutionStatus.CANCELLED
+    assert result.failure_reason is None
+    assert executor.events == []
+
+
+def test_mock_executor_stops_between_commands_after_cooperative_cancellation() -> None:
+    class CancellingTarget(MockCommandTarget):
+        def dispatch_with_cancellation(
+            self, command: HighLevelCommand, cancellation_token: ExecutionCancellationToken
+        ) -> bool:
+            result = super().dispatch_with_cancellation(command, cancellation_token)
+            if command.sequence == 0:
+                cancellation_token.cancel("server requested cancellation")
+            return result
+
+    target = CancellingTarget()
+    executor = MockExecutionExecutor(target)
+    commands = program(
+        command(0, "first", CommandType.WAIT, WaitParameters(1.0)),
+        command(1, "second", CommandType.STOP, StopParameters()),
+    )
+
+    result = executor.execute(task(commands))
+
+    assert result.status is ExecutionStatus.CANCELLED
+    assert [event.sequence for event in target.events] == [0]
+
+
+def test_mock_executor_can_cancel_during_wait_without_wall_clock_sleep() -> None:
+    class CancellingSleeper:
+        def sleep(
+            self,
+            _duration_seconds: float,
+            cancellation_token: ExecutionCancellationToken | None = None,
+        ) -> None:
+            assert cancellation_token is not None
+            cancellation_token.cancel("server requested cancellation")
+
+    executor = MockExecutionExecutor(sleeper=CancellingSleeper())
+    commands = program(
+        command(0, "wait", CommandType.WAIT, WaitParameters(30.0)),
+        command(1, "after", CommandType.STOP, StopParameters()),
+    )
+
+    result = executor.execute(task(commands))
+
+    assert result.status is ExecutionStatus.CANCELLED
+    assert [event.sequence for event in executor.events] == [0]
 
 
 def test_safety_validator_rejects_robot_binding_mismatch() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
+from inspect import signature
 from threading import Event
 from time import monotonic
 from uuid import UUID
@@ -11,13 +12,14 @@ from uuid import UUID
 from poppy_agent.agent import Agent, AgentSnapshot
 from poppy_agent.command import CommandProtocolParseError, HighLevelCommandProtocolParser
 from poppy_agent.execution import (
+    ExecutionCancellationToken,
     ExecutionExecutor,
     ExecutionResult,
     ExecutionStatus,
     ExecutionTask,
     UnsupportedExecutionProtocolError,
 )
-from poppy_agent.server.client import ServerClient
+from poppy_agent.server.client import ServerApiError, ServerClient
 from poppy_agent.server.config import ServerConfig
 from poppy_agent.server.models import (
     AgentRegistrationRequest,
@@ -85,7 +87,7 @@ class AgentServerRuntime:
         if task is None:
             return None
         try:
-            result = executor.execute(task)
+            result = self._execute_with_cancellation(executor, task)
         except Exception:
             self._report_failed_best_effort(task)
             raise
@@ -104,10 +106,25 @@ class AgentServerRuntime:
         next_execution_poll = next_heartbeat
         future: Future[ExecutionResult] | None = None
         task: ExecutionTask | None = None
+        cancellation_token: ExecutionCancellationToken | None = None
+        next_cancellation_check = next_heartbeat
+        cancellation_monitor_error: Exception | None = None
         worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="poppy-execution")
         try:
             while not stop_event.is_set():
                 now = monotonic()
+                if (
+                    future is not None
+                    and task is not None
+                    and cancellation_token is not None
+                    and now >= next_cancellation_check
+                ):
+                    try:
+                        self._poll_cancellation(task, cancellation_token)
+                    except Exception as exc:
+                        cancellation_monitor_error = exc
+                        cancellation_token.cancel("execution cancellation status unavailable")
+                    next_cancellation_check += max(0.1, self.config.execution_poll_interval_seconds)
                 if now >= next_heartbeat:
                     self.heartbeat_once()
                     next_heartbeat += self.config.heartbeat_interval_seconds
@@ -115,7 +132,13 @@ class AgentServerRuntime:
                     task = self._poll_and_mark_running()
                     next_execution_poll += self.config.execution_poll_interval_seconds
                     if task is not None:
-                        future = worker.submit(executor.execute, task)
+                        cancellation_token = ExecutionCancellationToken()
+                        future = worker.submit(
+                            _execute_with_optional_cancellation,
+                            executor,
+                            task,
+                            cancellation_token,
+                        )
 
                 if future is not None and future.done():
                     assert task is not None
@@ -124,9 +147,16 @@ class AgentServerRuntime:
                     except Exception:
                         self._report_failed_best_effort(task)
                         raise
+                    if cancellation_monitor_error is not None:
+                        self._report_failed_best_effort(task)
+                        raise AgentServerRuntimeError(
+                            "execution cancellation status could not be verified"
+                        ) from cancellation_monitor_error
                     self._finish_execution(task, result)
                     future = None
                     task = None
+                    cancellation_token = None
+                    cancellation_monitor_error = None
 
                 if future is not None:
                     wait_seconds = min(0.1, max(0.0, next_heartbeat - monotonic()))
@@ -139,6 +169,8 @@ class AgentServerRuntime:
                     return
         finally:
             if future is not None and not future.done():
+                if cancellation_token is not None:
+                    cancellation_token.cancel("runtime stopping")
                 future.cancel()
             worker.shutdown(wait=False, cancel_futures=True)
 
@@ -169,6 +201,9 @@ class AgentServerRuntime:
             raise
         self.active_execution_id = task.execution_id
         try:
+            if self._server_status_is_cancelled(task):
+                self.active_execution_id = None
+                return None
             self.server.report_execution_status(
                 self.agent_id,
                 task.execution_id,
@@ -177,6 +212,8 @@ class AgentServerRuntime:
             )
         except Exception:
             self.active_execution_id = None
+            if self._server_status_is_cancelled(task):
+                return None
             raise
         return task
 
@@ -189,14 +226,85 @@ class AgentServerRuntime:
         except Exception:
             self._report_failed_best_effort(task)
             raise
-        self.server.report_execution_status(
-            agent_id,
-            task.execution_id,
-            task.robot_id,
-            terminal_status,
-        )
+        try:
+            if result.status is not ExecutionStatus.CANCELLED and self._server_status_is_cancelled(
+                task
+            ):
+                result = ExecutionResult(
+                    task.execution_id,
+                    ExecutionStatus.CANCELLED,
+                )
+                terminal_status = ServerExecutionReportStatus.CANCELLED
+            self.server.report_execution_status(
+                agent_id,
+                task.execution_id,
+                task.robot_id,
+                terminal_status,
+            )
+        except ServerApiError:
+            if result.status is not ExecutionStatus.CANCELLED and self._server_status_is_cancelled(
+                task
+            ):
+                result = ExecutionResult(
+                    task.execution_id,
+                    ExecutionStatus.CANCELLED,
+                )
+                self.server.report_execution_status(
+                    agent_id,
+                    task.execution_id,
+                    task.robot_id,
+                    ServerExecutionReportStatus.CANCELLED,
+                )
+            else:
+                raise
         self.active_execution_id = None
         return result
+
+    def _execute_with_cancellation(
+        self, executor: ExecutionExecutor, task: ExecutionTask
+    ) -> ExecutionResult:
+        token = ExecutionCancellationToken()
+        worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="poppy-execution-once")
+        future = worker.submit(_execute_with_optional_cancellation, executor, task, token)
+        cancellation_error: Exception | None = None
+        try:
+            next_check = monotonic()
+            while not future.done():
+                if monotonic() >= next_check:
+                    try:
+                        self._poll_cancellation(task, token)
+                    except Exception as exc:
+                        cancellation_error = exc
+                        token.cancel("execution cancellation status unavailable")
+                    next_check += max(0.1, self.config.execution_poll_interval_seconds)
+                Event().wait(0.01)
+            result = future.result()
+            if cancellation_error is not None:
+                raise AgentServerRuntimeError(
+                    "execution cancellation status could not be verified"
+                ) from cancellation_error
+            return result
+        finally:
+            worker.shutdown(wait=True, cancel_futures=True)
+
+    def _poll_cancellation(
+        self, task: ExecutionTask, cancellation_token: ExecutionCancellationToken
+    ) -> None:
+        get_status = getattr(self.server, "get_execution_status", None)
+        if not callable(get_status):
+            return
+        status = get_status(self._registered_agent_id(), task.execution_id, task.robot_id).status
+        if status.value == ExecutionStatus.CANCELLED.value:
+            cancellation_token.cancel("server requested cancellation")
+            self.active_execution_id = None
+
+    def _server_status_is_cancelled(self, task: ExecutionTask) -> bool:
+        get_status = getattr(self.server, "get_execution_status", None)
+        if not callable(get_status):
+            return False
+        status = get_status(self._registered_agent_id(), task.execution_id, task.robot_id).status
+        status_value: object = getattr(status, "value", None)
+        return status_value == ExecutionStatus.CANCELLED.value
 
     def _report_failed_best_effort(self, task: ExecutionTask) -> None:
         agent_id = self._registered_agent_id()
@@ -267,7 +375,24 @@ def _terminal_report_status(result: ExecutionResult) -> ServerExecutionReportSta
         return ServerExecutionReportStatus.COMPLETED
     if result.status is ExecutionStatus.FAILED:
         return ServerExecutionReportStatus.FAILED
+    if result.status is ExecutionStatus.CANCELLED:
+        return ServerExecutionReportStatus.CANCELLED
     raise AgentServerRuntimeError("Execution result status is not supported")
+
+
+def _execute_with_optional_cancellation(
+    executor: ExecutionExecutor,
+    task: ExecutionTask,
+    cancellation_token: ExecutionCancellationToken,
+) -> ExecutionResult:
+    execute = executor.execute
+    try:
+        supports_cancellation = "cancellation_token" in signature(execute).parameters
+    except (TypeError, ValueError):
+        supports_cancellation = False
+    if supports_cancellation:
+        return execute(task, cancellation_token=cancellation_token)
+    return execute(task)
 
 
 def _operational_status(snapshot: AgentSnapshot) -> str:

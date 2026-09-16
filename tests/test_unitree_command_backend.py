@@ -18,6 +18,8 @@ from poppy_agent.command import (
 )
 from poppy_agent.execution import (
     CommandSafetyPolicy,
+    ExecutionCancellationToken,
+    ExecutionCancelledError,
     ExecutionStatus,
     ExecutionTask,
     MockExecutionExecutor,
@@ -208,6 +210,37 @@ def test_motion_client_failure_propagates_without_sleeping() -> None:
         "execution target failed: configured fake Unitree client failure for Move"
     )
     assert sleeper.durations == []
+
+
+def test_motion_cancellation_remains_cancelled_through_hardware_target() -> None:
+    client = FakeUnitreeCommandClient()
+
+    class CancellingSleeper:
+        def sleep(
+            self,
+            _duration_seconds: float,
+            cancellation_token: ExecutionCancellationToken | None = None,
+        ) -> None:
+            assert cancellation_token is not None
+            cancellation_token.cancel("test cancellation")
+            raise ExecutionCancelledError("test cancellation")
+
+    backend = UnitreeCommandBackend(
+        client,
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.5, 90.0)),
+        sleeper=CancellingSleeper(),
+    )
+    target = HardwareCommandTarget(backend)
+    target.initialize()
+
+    result = MockExecutionExecutor(
+        target,
+        safety_policy=CommandSafetyPolicy(),
+        bound_robot_id=ROBOT_ID,
+    ).execute(task(command(0, CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 1.0))))
+
+    assert result.status is ExecutionStatus.CANCELLED
+    assert [call.operation for call in client.calls] == [UnitreeCommandOperation.MOVE]
 
 
 def test_posture_mapping_records_official_operation_shape_in_fake_client() -> None:

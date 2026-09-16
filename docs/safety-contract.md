@@ -89,8 +89,9 @@ These are separate concepts:
 - **Program STOP**: a typed protocol command. The target records/handles STOP and
   the executor ends the current program successfully; later program commands are
   not dispatched. This is not an emergency stop.
-- **Execution Cancellation**: a lifecycle operation that prevents or cancels an
-  execution. It is not implemented by the Agent safety layer in this change.
+- **Execution Cancellation**: a lifecycle operation represented by Server's
+  authoritative CANCELLED state. The Agent propagates it cooperatively through
+  an ExecutionCancellationToken; it is not a physical stop.
 - **Administrative Stop**: a future administrator/API request to stop an execution.
   No Admin API is added here.
 - **Physical Emergency Stop**: a hardware/operator safety mechanism. It is outside
