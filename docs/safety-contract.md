@@ -29,6 +29,11 @@ ExecutionSafetyValidator
 This document does not authorize or implement Unitree control, physical movement,
 or a hardware emergency stop.
 
+Physical enablement requirements and their current blocking status are defined in
+[`physical-readiness.md`](physical-readiness.md). This safety contract remains the
+command-level boundary; the readiness gate is an additional prerequisite before
+any future physical target can be selected.
+
 ## Trust Boundaries
 
 ```text

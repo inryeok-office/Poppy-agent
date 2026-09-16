@@ -144,7 +144,13 @@ def test_main_keeps_unitree_mode_on_heartbeat_without_executor(
     monkeypatch.setattr(
         main_module.AgentConfig,
         "from_environment",
-        classmethod(lambda cls: type("UnitreeConfig", (), {"robot_mode": "unitree"})()),
+        classmethod(
+            lambda cls: type(
+                "UnitreeConfig",
+                (),
+                {"robot_mode": "unitree", "enable_physical_execution": True},
+            )()
+        ),
     )
 
     assert main_module.main() == 0

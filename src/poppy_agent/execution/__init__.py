@@ -25,6 +25,16 @@ from poppy_agent.execution.motion import (
     MotionUnit,
     RecordingSleeper,
 )
+from poppy_agent.execution.readiness import (
+    PhysicalCommandClientKind,
+    PhysicalExecutionBlockedError,
+    PhysicalExecutionGate,
+    PhysicalExecutionReadiness,
+    PhysicalReadinessBlocker,
+    PhysicalReadinessEvaluator,
+    PhysicalReadinessEvidence,
+    PhysicalReadinessStatus,
+)
 from poppy_agent.execution.safety import (
     CommandSafetyPolicy,
     ExecutionSafetyValidator,
@@ -54,4 +64,12 @@ __all__ = [
     "SafetyValidationError",
     "UnsupportedExecutionProtocolError",
     "RecordingSleeper",
+    "PhysicalExecutionBlockedError",
+    "PhysicalExecutionGate",
+    "PhysicalExecutionReadiness",
+    "PhysicalCommandClientKind",
+    "PhysicalReadinessBlocker",
+    "PhysicalReadinessEvidence",
+    "PhysicalReadinessEvaluator",
+    "PhysicalReadinessStatus",
 ]

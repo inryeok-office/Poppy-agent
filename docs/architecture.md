@@ -53,3 +53,9 @@ in-memory test double with call recording and deterministic failure injection; i
 has no SDK, socket, DDS, or robot dependency. `UnitreeGo2Adapter` remains a
 separate read-only telemetry adapter, and this boundary is not wired into
 production Unitree mode.
+
+Physical execution is additionally guarded by `PhysicalExecutionGate`. Its default
+readiness is `BLOCKED`; the explicit `POPPY_ENABLE_PHYSICAL_EXECUTION` request cannot
+override unresolved client, policy, approval, telemetry, observability, or hardware
+validation requirements. See [`physical-readiness.md`](physical-readiness.md) for
+the source-of-truth contract.
