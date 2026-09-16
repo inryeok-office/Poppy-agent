@@ -75,17 +75,15 @@ class MockExecutionExecutor:
         *,
         fail_execution: bool = False,
         fail_at_sequence: int | None = None,
-        safety_validator: ExecutionSafetyValidator | None = None,
+        safety_policy: CommandSafetyPolicy | None = None,
         bound_robot_id: UUID | None = None,
     ) -> None:
-        if safety_validator is not None and bound_robot_id is not None:
-            raise ValueError("safety_validator and bound_robot_id cannot both be provided")
         self.target = target or MockCommandTarget()
         self._fail_execution = fail_execution
         self._fail_at_sequence = fail_at_sequence
-        self._safety_validator = safety_validator or ExecutionSafetyValidator(
+        self._safety_validator = ExecutionSafetyValidator(
             self.target,
-            policy=CommandSafetyPolicy.for_mock_trace(),
+            policy=safety_policy or CommandSafetyPolicy.for_mock_trace(),
             bound_robot_id=bound_robot_id,
         )
 

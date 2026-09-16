@@ -223,6 +223,22 @@ def test_safety_validator_rejects_robot_binding_mismatch() -> None:
         validator.validate(task())
 
 
+def test_safety_validator_rejects_task_and_program_protocol_mismatch() -> None:
+    execution_task = task()
+    object.__setattr__(
+        execution_task,
+        "command_program",
+        HighLevelCommandProgram(protocol_version=2, commands=()),
+    )
+    validator = ExecutionSafetyValidator(MockCommandTarget())
+
+    with pytest.raises(
+        SafetyValidationError,
+        match="does not match command program",
+    ):
+        validator.validate(execution_task)
+
+
 def test_safety_validator_preflights_all_commands_before_dispatch() -> None:
     class UnsupportedMoveTarget(MockCommandTarget):
         def supports(self, command_type: CommandType) -> bool:

@@ -71,6 +71,8 @@ class ExecutionSafetyValidator:
                 f"{task.protocol_version}; supported version is "
                 f"{SUPPORTED_EXECUTION_PROTOCOL_VERSION}"
             )
+        if task.command_program.protocol_version != task.protocol_version:
+            raise SafetyValidationError("execution protocol version does not match command program")
         if self._bound_robot_id is not None and task.robot_id != self._bound_robot_id:
             raise SafetyValidationError("execution robot identity does not match Agent binding")
 
