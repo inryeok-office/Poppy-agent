@@ -124,6 +124,7 @@ class ServerExecutionDelivery:
     robot_id: UUID
     status: str
     protocol_version: int
+    command_payload: str
 
 
 class ServerExecutionReportStatus(StrEnum):

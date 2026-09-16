@@ -128,11 +128,15 @@ class ServerClient:
             raise ServerResponseError(
                 "Poppy-Server execution robot identity does not match request"
             )
+        command_payload = execution.get("commandPayload")
+        if not isinstance(command_payload, str) or not command_payload.strip():
+            raise ServerResponseError("Poppy-Server command payload is malformed")
         return ServerExecutionDelivery(
             execution_id=_uuid_field(execution, "executionId"),
             robot_id=delivery_robot_id,
             status=status,
             protocol_version=protocol_version,
+            command_payload=command_payload,
         )
 
     def report_execution_status(

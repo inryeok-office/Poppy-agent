@@ -246,6 +246,7 @@ def test_connection_failure_and_malformed_response_are_reported() -> None:
 
 def test_fetch_next_execution_maps_assigned_delivery_and_request() -> None:
     execution_id = UUID("00000000-0000-0000-0000-000000000003")
+    command_payload = '{"protocolVersion":1,"commands":[]}'
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
@@ -263,6 +264,7 @@ def test_fetch_next_execution_maps_assigned_delivery_and_request() -> None:
                         "robotId": str(ROBOT_ID),
                         "status": "ASSIGNED",
                         "protocolVersion": 1,
+                        "commandPayload": command_payload,
                     }
                 },
                 "error": None,
@@ -278,7 +280,36 @@ def test_fetch_next_execution_maps_assigned_delivery_and_request() -> None:
         robot_id=ROBOT_ID,
         status="ASSIGNED",
         protocol_version=1,
+        command_payload=command_payload,
     )
+
+
+@pytest.mark.parametrize("command_payload", [None, {}, [], 1, " "])
+def test_fetch_next_execution_rejects_missing_or_malformed_command_payload(
+    command_payload: object,
+) -> None:
+    client = client_for(
+        lambda _: httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "execution": {
+                        "executionId": str(EXECUTION_ID),
+                        "robotId": str(ROBOT_ID),
+                        "status": "ASSIGNED",
+                        "protocolVersion": 1,
+                        "commandPayload": command_payload,
+                    }
+                },
+                "error": None,
+            },
+        )
+    )
+
+    with pytest.raises(ServerResponseError, match="command payload"):
+        client.fetch_next_execution(AGENT_ID, ROBOT_ID)
+    client.close()
 
 
 def test_fetch_next_execution_returns_none_when_no_work_is_available() -> None:
@@ -301,6 +332,7 @@ def test_fetch_next_execution_returns_none_when_no_work_is_available() -> None:
                 "robotId": str(ROBOT_ID),
                 "status": "ASSIGNED",
                 "protocolVersion": 1,
+                "commandPayload": '{"protocolVersion":1,"commands":[]}',
             },
             "UUID",
         ),

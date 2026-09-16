@@ -9,6 +9,7 @@ from time import monotonic
 from uuid import UUID
 
 from poppy_agent.agent import Agent, AgentSnapshot
+from poppy_agent.command import HighLevelCommandProtocolParser
 from poppy_agent.execution import ExecutionExecutor, ExecutionResult, ExecutionStatus, ExecutionTask
 from poppy_agent.server.client import ServerClient
 from poppy_agent.server.config import ServerConfig
@@ -148,10 +149,12 @@ class AgentServerRuntime:
             raise AgentServerRuntimeError("Execution delivery robot identity does not match Agent")
         if delivery.status != "ASSIGNED":
             raise AgentServerRuntimeError("Execution delivery status is not ASSIGNED")
+        command_program = HighLevelCommandProtocolParser().parse(delivery.command_payload)
         task = ExecutionTask(
             execution_id=delivery.execution_id,
             robot_id=delivery.robot_id,
             protocol_version=delivery.protocol_version,
+            command_program=command_program,
         )
         self.active_execution_id = task.execution_id
         try:
