@@ -201,6 +201,28 @@ def test_preflight_rejects_later_unsupported_command_before_posture_call() -> No
     assert client.calls == []
 
 
+def test_supports_failure_is_normalized_to_failed_result_before_dispatch() -> None:
+    client = FakeUnitreeCommandClient()
+
+    class UnavailableSupportBackend(UnitreeCommandBackend):
+        def supports(self, _command_type: CommandType) -> bool:
+            raise RuntimeError("capability lookup unavailable")
+
+    backend = UnavailableSupportBackend(client)
+    target = HardwareCommandTarget(backend)
+    target.initialize()
+
+    result = MockExecutionExecutor(
+        target,
+        safety_policy=CommandSafetyPolicy(),
+        bound_robot_id=ROBOT_ID,
+    ).execute(task(command(0, CommandType.POSTURE, PostureParameters(Posture.SIT))))
+
+    assert result.status is ExecutionStatus.FAILED
+    assert result.failure_reason == ("execution target support is unavailable for POSTURE")
+    assert client.calls == []
+
+
 def test_fake_client_failure_propagates_to_failed_execution_result() -> None:
     client, _backend, target = initialized_backend(
         fail_operation=UnitreeCommandOperation.STAND_UP,
