@@ -117,6 +117,50 @@ def test_strategy_rejects_invalid_turn_angle(value: float) -> None:
         strategy.plan(intent(CommandType.TURN, TurnParameters(TurnDirection.LEFT, value)))
 
 
+@pytest.mark.parametrize(
+    ("command_type", "parameters", "linear_rate", "angular_rate"),
+    [
+        (
+            CommandType.MOVE,
+            MoveParameters(MoveDirection.FORWARD, 1.0e308),
+            1.0e-308,
+            90.0,
+        ),
+        (
+            CommandType.MOVE,
+            MoveParameters(MoveDirection.FORWARD, 1.0e-308),
+            1.0e308,
+            90.0,
+        ),
+        (
+            CommandType.TURN,
+            TurnParameters(TurnDirection.LEFT, 1.0e308),
+            0.5,
+            1.0e-308,
+        ),
+        (
+            CommandType.TURN,
+            TurnParameters(TurnDirection.LEFT, 1.0e-308),
+            0.5,
+            1.0e308,
+        ),
+    ],
+)
+def test_strategy_rejects_non_positive_or_non_finite_computed_duration(
+    command_type: CommandType,
+    parameters: object,
+    linear_rate: float,
+    angular_rate: float,
+) -> None:
+    strategy = MotionExecutionStrategy(MotionProfile(linear_rate, angular_rate))
+
+    with pytest.raises(
+        MotionStrategyError,
+        match="motion duration must be a positive finite number",
+    ):
+        strategy.plan(intent(command_type, parameters))
+
+
 def test_recording_sleeper_records_duration_without_wall_clock_wait() -> None:
     sleeper = RecordingSleeper()
 

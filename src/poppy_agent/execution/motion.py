@@ -82,6 +82,8 @@ class MotionExecutionStrategy:
         if intent.type is CommandType.MOVE and isinstance(intent.parameters, MoveParameters):
             _positive_finite(intent.parameters.distance_meters, "MOVE distance")
             rate = self._profile.linear_rate_meters_per_second
+            duration = intent.parameters.distance_meters / rate
+            _positive_finite(duration, "motion duration")
             return MotionPlan(
                 sequence=intent.sequence,
                 source_block_id=intent.source_block_id,
@@ -91,11 +93,13 @@ class MotionExecutionStrategy:
                 magnitude_unit=MotionUnit.METERS,
                 rate=rate,
                 rate_unit=MotionRateUnit.METERS_PER_SECOND,
-                duration_seconds=intent.parameters.distance_meters / rate,
+                duration_seconds=duration,
             )
         if intent.type is CommandType.TURN and isinstance(intent.parameters, TurnParameters):
             _positive_finite(intent.parameters.angle_degrees, "TURN angle")
             rate = self._profile.angular_rate_degrees_per_second
+            duration = intent.parameters.angle_degrees / rate
+            _positive_finite(duration, "motion duration")
             return MotionPlan(
                 sequence=intent.sequence,
                 source_block_id=intent.source_block_id,
@@ -105,7 +109,7 @@ class MotionExecutionStrategy:
                 magnitude_unit=MotionUnit.DEGREES,
                 rate=rate,
                 rate_unit=MotionRateUnit.DEGREES_PER_SECOND,
-                duration_seconds=intent.parameters.angle_degrees / rate,
+                duration_seconds=duration,
             )
         raise MotionStrategyError("motion intent type and parameters do not match")
 
