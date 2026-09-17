@@ -145,9 +145,12 @@ class OperationalStatusTracker:
         with self._lock:
             self._active_execution_id = execution_id
 
-    def set_execution_polling_enabled(self, enabled: bool) -> None:
+    def set_execution_polling_enabled(self, enabled: bool) -> bool:
         with self._lock:
+            if self._execution_polling_enabled == enabled:
+                return False
             self._execution_polling_enabled = enabled
+            return True
 
     def snapshot(self, *, observed_at: datetime | None = None) -> AgentOperationalSnapshot:
         observed = observed_at or datetime.now(UTC)

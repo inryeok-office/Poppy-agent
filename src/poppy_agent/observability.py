@@ -14,6 +14,7 @@ AGENT_REGISTERED = "agent_registered"
 RUNTIME_READY = "runtime_ready"
 RUNTIME_STOPPING = "runtime_stopping"
 RUNTIME_STOPPED = "runtime_stopped"
+RUNTIME_SHUTDOWN_FAILED = "runtime_shutdown_failed"
 STARTUP_FAILURE = "startup_failure"
 
 EXECUTION_ASSIGNED = "execution_assigned"

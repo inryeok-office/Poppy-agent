@@ -45,6 +45,7 @@ from poppy_agent.observability import (
     RUNTIME_DEGRADED,
     RUNTIME_READY,
     RUNTIME_RESUMED,
+    RUNTIME_SHUTDOWN_FAILED,
     RUNTIME_STOPPED,
     RUNTIME_STOPPING,
     SERVER_CONNECTIVITY_LOST,
@@ -280,7 +281,7 @@ class AgentServerRuntime:
 
     def execution_once(self, executor: ExecutionExecutor) -> ExecutionResult | None:
         """Poll, execute, and report one assigned execution without robot commands."""
-        self._operational_status.set_execution_polling_enabled(True)
+        self._set_execution_polling_enabled(True)
         task = self._poll_and_mark_running()
         if task is None:
             return None
@@ -314,8 +315,7 @@ class AgentServerRuntime:
 
     def run_loop(self, stop_event: Event, executor: ExecutionExecutor) -> None:
         """Run heartbeat and polling schedules with fail-closed reconnect handling."""
-        self._operational_status.set_execution_polling_enabled(True)
-        self._publish_status()
+        self._set_execution_polling_enabled(True)
         next_heartbeat = monotonic()
         next_execution_poll = next_heartbeat
         next_reconnect = next_heartbeat
@@ -495,7 +495,7 @@ class AgentServerRuntime:
                 if stop_event.wait(wait_seconds):
                     return
         finally:
-            self._operational_status.set_execution_polling_enabled(False)
+            self._set_execution_polling_enabled(False)
             if future is not None and not future.done():
                 if cancellation_token is not None:
                     cancellation_token.cancel("runtime stopping")
@@ -745,16 +745,32 @@ class AgentServerRuntime:
         self._operational_status.set_lifecycle(RuntimeLifecycleState.STOPPING)
         self._publish_status()
         log_event(logger, logging.INFO, RUNTIME_STOPPING, agent_id=self.agent_id)
+        shutdown_errors: list[Exception] = []
         try:
-            self.server.close()
-        finally:
+            try:
+                self.server.close()
+            except Exception as exc:
+                shutdown_errors.append(exc)
             try:
                 self.agent.shutdown()
-            finally:
-                self._operational_status.set_lifecycle(RuntimeLifecycleState.STOPPED)
+            except Exception as exc:
+                shutdown_errors.append(exc)
+        finally:
+            if shutdown_errors:
+                self._operational_status.set_lifecycle(RuntimeLifecycleState.FAILED)
                 self._publish_status()
-                self._status_publisher.clear()
-                log_event(logger, logging.INFO, RUNTIME_STOPPED, agent_id=self.agent_id)
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    RUNTIME_SHUTDOWN_FAILED,
+                    agent_id=self.agent_id,
+                    error_type=safe_exception_type(shutdown_errors[0]),
+                )
+                raise shutdown_errors[0]
+            self._operational_status.set_lifecycle(RuntimeLifecycleState.STOPPED)
+            self._publish_status()
+            self._status_publisher.clear()
+            log_event(logger, logging.INFO, RUNTIME_STOPPED, agent_id=self.agent_id)
 
     def _is_transient_failure(self, exc: Exception) -> bool:
         if isinstance(exc, ServerTransportError):
@@ -935,6 +951,10 @@ class AgentServerRuntime:
         self.active_execution_id = execution_id
         self._operational_status.set_active_execution(execution_id)
         self._publish_status()
+
+    def _set_execution_polling_enabled(self, enabled: bool) -> None:
+        if self._operational_status.set_execution_polling_enabled(enabled):
+            self._publish_status()
 
     def _mark_failed(self, _exc: Exception) -> None:
         self._operational_status.set_lifecycle(RuntimeLifecycleState.FAILED)
