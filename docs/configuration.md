@@ -17,6 +17,9 @@ Current placeholders:
 - `POPPY_SERVER_MAX_RETRIES`: bounded transport retry count
 - `POPPY_SERVER_RECONNECT_INITIAL_DELAY_SECONDS`: runtime reconnect backoff initial delay
 - `POPPY_SERVER_RECONNECT_MAX_DELAY_SECONDS`: runtime reconnect backoff upper bound
+- `POPPY_RUNTIME_STATUS_PATH`: optional local JSON status path. When set, the Agent
+  publishes an atomic operational snapshot; the systemd example uses
+  `/run/poppy-agent/status.json`.
 - `UNITREE_NETWORK_INTERFACE`: Linux network interface passed to the official SDK, such as `enp2s0`
 - `POPPY_ROBOT_MODEL`, `POPPY_ROBOT_EDITION`, `POPPY_ROBOT_FIRMWARE_VERSION`: explicit Unitree identity metadata when the SDK does not provide it
 - `UNITREE_SDK_VERSION`: explicit Unitree SDK metadata for registration

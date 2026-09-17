@@ -45,6 +45,7 @@ EXECUTION_RECONCILIATION_STARTED = "execution_reconciliation_started"
 EXECUTION_RECONCILIATION_COMPLETED = "execution_reconciliation_completed"
 EXECUTION_RECONCILIATION_FAILED = "execution_reconciliation_failed"
 AUTHENTICATION_FAILURE = "authentication_failure"
+OPERATIONAL_STATUS_PUBLISH_FAILED = "operational_status_publish_failed"
 
 _ALLOWED_CONTEXT = frozenset(
     {

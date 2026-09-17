@@ -30,6 +30,7 @@ class ServerConfig:
     max_retries: int = 1
     reconnect_initial_delay_seconds: float = 1.0
     reconnect_max_delay_seconds: float = 30.0
+    runtime_status_path: str | None = None
 
     def __post_init__(self) -> None:
         normalized_url = self.server_url.rstrip("/")
@@ -99,6 +100,7 @@ class ServerConfig:
             reconnect_max_delay_seconds=_float_value(
                 values, "POPPY_SERVER_RECONNECT_MAX_DELAY_SECONDS", 30.0
             ),
+            runtime_status_path=_optional_value(values, "POPPY_RUNTIME_STATUS_PATH"),
         )
 
 
@@ -120,3 +122,11 @@ def _int_value(values: Mapping[str, str], name: str, default: int) -> int:
         return int(raw)
     except ValueError as exc:
         raise ServerConfigurationError(f"{name} must be an integer") from exc
+
+
+def _optional_value(values: Mapping[str, str], name: str) -> str | None:
+    raw = values.get(name)
+    if raw is None:
+        return None
+    normalized = raw.strip()
+    return normalized or None

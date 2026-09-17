@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 from threading import Event, Thread
 from time import monotonic, sleep
@@ -219,6 +220,26 @@ def test_invalid_reconnect_configuration_fails_closed() -> None:
             reconnect_initial_delay_seconds=2.0,
             reconnect_max_delay_seconds=1.0,
         )
+
+
+def test_runtime_snapshot_tracks_ready_state_and_cleans_status_file(tmp_path) -> None:
+    server = IdleTransportServer()
+    status_path = tmp_path / "status.json"
+    runtime = AgentServerRuntime(
+        create_agent(AgentConfig(robot_mode="mock", robot_id=str(ROBOT_ID))),
+        server,  # type: ignore[arg-type]
+        replace(config(), runtime_status_path=str(status_path)),
+    )
+
+    runtime.start()
+    snapshot = runtime.operational_snapshot()
+    assert snapshot.operational_ready
+    assert not snapshot.accepting_new_execution
+    assert snapshot.active_execution_id is None
+    assert status_path.exists()
+
+    runtime.shutdown()
+    assert not status_path.exists()
 
 
 def test_runtime_distinguishes_transient_auth_and_contract_failures() -> None:

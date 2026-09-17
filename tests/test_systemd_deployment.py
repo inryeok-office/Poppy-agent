@@ -16,6 +16,8 @@ def test_systemd_service_uses_runtime_contract() -> None:
         "ExecStart=/home/poppy/projects/Poppy-agent/.venv/bin/python -m poppy_agent.main" in service
     )
     assert "EnvironmentFile=/etc/poppy-agent/poppy-agent.env" in service
+    assert "RuntimeDirectory=poppy-agent" in service
+    assert "RuntimeDirectoryMode=0750" in service
     assert "Wants=network-online.target" in service
     assert "After=network-online.target" in service
     assert "Restart=on-failure" in service
@@ -28,3 +30,4 @@ def test_systemd_environment_example_has_no_shell_expansion_or_real_secret() -> 
     assert "POPPY_AGENT_TOKEN=replace-with-agent-token" in environment
     assert "$HOME" not in environment
     assert "${" not in environment
+    assert "POPPY_RUNTIME_STATUS_PATH=/run/poppy-agent/status.json" in environment

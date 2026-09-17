@@ -27,6 +27,7 @@ from poppy_agent.server.runtime import (
     AgentServerRuntime,
     AgentServerRuntimeError,
     RuntimeConnectivityState,
+    RuntimeLifecycleState,
 )
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "AgentServerRuntime",
     "AgentServerRuntimeError",
     "RuntimeConnectivityState",
+    "RuntimeLifecycleState",
     "HeartbeatRequest",
     "HeartbeatResponse",
     "HeartbeatRobotRequest",
