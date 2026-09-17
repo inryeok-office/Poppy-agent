@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Event
-from time import sleep
+from time import monotonic
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener
@@ -72,13 +72,19 @@ class GateExecutor:
 class CooperativeCancellationExecutor:
     """Wait for the runtime cancellation token without touching hardware."""
 
-    def __init__(self) -> None:
+    def __init__(self, timeout_seconds: float) -> None:
         self.started = Event()
+        self.abort = Event()
+        self.timeout_seconds = timeout_seconds
 
     def execute(self, task: Any, *, cancellation_token: Any) -> ExecutionResult:
         self.started.set()
+        deadline = monotonic() + self.timeout_seconds
         while not cancellation_token.is_cancelled():
-            sleep(0.01)
+            if self.abort.wait(min(0.01, max(0.0, deadline - monotonic()))):
+                raise RuntimeError("two-agent E2E cancellation signal was not delivered")
+            if monotonic() >= deadline:
+                raise RuntimeError("two-agent E2E cancellation timed out")
         return ExecutionResult(task.execution_id, ExecutionStatus.CANCELLED)
 
 
@@ -332,13 +338,12 @@ def _run_cancellation_isolation(
         http, session_b, execution_b, {agent_a.robot_id, agent_b.robot_id}, config
     )
     _assert(assigned_a != assigned_b, "cancellation executions shared one Robot")
-    cancelled_agent = agent_a if assigned_a == agent_a.robot_id else agent_b
-    normal_agent = agent_b if cancelled_agent is agent_a else agent_a
-    cancelled_session = session_a if cancelled_agent is agent_a else session_b
-    cancelled_execution = execution_a if cancelled_agent is agent_a else execution_b
-    normal_session = session_b if cancelled_agent is agent_a else session_a
-    normal_execution = execution_b if cancelled_agent is agent_a else execution_a
-    cancel_executor = CooperativeCancellationExecutor()
+    agent_by_robot = {agent_a.robot_id: agent_a, agent_b.robot_id: agent_b}
+    cancelled_agent = agent_by_robot[assigned_a]
+    normal_agent = agent_by_robot[assigned_b]
+    cancelled_session, cancelled_execution = session_a, execution_a
+    normal_session, normal_execution = session_b, execution_b
+    cancel_executor = CooperativeCancellationExecutor(config.timeout_seconds)
     normal_executor = GateExecutor()
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="two-agent-cancel-e2e") as pool:
         future_cancel = pool.submit(cancelled_agent.runtime.execution_once, cancel_executor)
@@ -353,13 +358,16 @@ def _run_cancellation_isolation(
             normal_session,
             normal_execution,
         )
-        http.post(
-            f"/api/v1/executions/{cancelled_execution}/cancel",
-            {},
-            expected_status=200,
-            session_token=cancelled_session,
-        )
-        result_cancel = future_cancel.result(timeout=config.timeout_seconds)
+        try:
+            http.post(
+                f"/api/v1/executions/{cancelled_execution}/cancel",
+                {},
+                expected_status=200,
+                session_token=cancelled_session,
+            )
+            result_cancel = future_cancel.result(timeout=config.timeout_seconds)
+        finally:
+            cancel_executor.abort.set()
         _assert(
             result_cancel is not None and result_cancel.status is ExecutionStatus.CANCELLED,
             "cancelled execution did not return CANCELLED",
