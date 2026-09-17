@@ -49,6 +49,13 @@ authoritative status check receives authentication failure, cooperatively
 interrupts the Mock executor, and cannot submit a terminal report with the old
 credential. A replacement Agent can then receive new work.
 
+Each harness scenario retires its Robot fixture through the official admin
+Robot update API after its runtimes have shut down. The fixture is set to
+`UNAVAILABLE`, and the harness verifies that it is unoccupied with no current
+Execution before the next scenario starts. This avoids waiting for heartbeat
+timeout and keeps repeated runs isolated without changing Server allocation
+semantics or mutating the database directly.
+
 ## Race protection
 
 An old heartbeat or terminal report after rotation is rejected before it can
@@ -73,6 +80,11 @@ $env:POPPY_E2E_SERVER_URL = "http://localhost:8080"
 $env:POPPY_E2E_AGENT_TOKEN = "local-stale-agent-e2e-token"
 python scripts\stale_agent_fencing_e2e.py
 ```
+
+The harness can be run repeatedly against the same local Server/PostgreSQL
+instance. Scenario-created Robots are retired through the API in both success
+and failure cleanup paths, so a previous scenario cannot remain an eligible
+`READY` allocation candidate.
 
 The scenario is software-only and does not use GO2, Unitree SDK commands,
 SportClient, DDS command publishing, physical movement, or physical emergency

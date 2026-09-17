@@ -61,6 +61,12 @@ command replay; stale terminal-report protection; Robot release; and new work
 after recovery. It uses Mock executors only. See
 [`stale-agent-fencing.md`](stale-agent-fencing.md).
 
+Each scenario retires its Robot fixture through the official admin Robot update
+API (`operationalStatus=UNAVAILABLE`) in both success and failure cleanup paths.
+The harness verifies the Robot is unoccupied with no current Execution before
+the next scenario proceeds, so repeated runs do not depend on heartbeat
+timeout or direct database mutation.
+
 ## Command Safety Validation
 
 `ExecutionSafetyValidator` is covered by local tests using only mock targets. The

@@ -119,9 +119,14 @@ def _run_idle_fencing(http: E2EHttpClient, config: E2EConfig, run_id: str) -> No
             raise FullMockE2EError("new Agent unexpectedly received idle work")
         _assert_same_robot_different_agent_rejected(http, config, robot_id, run_id)
     finally:
-        old.runtime.shutdown()
-        if new is not None:
-            new.runtime.shutdown()
+        try:
+            try:
+                old.runtime.shutdown()
+            finally:
+                if new is not None:
+                    new.runtime.shutdown()
+        finally:
+            _retire_robot_fixture(http, robot_id, config)
 
 
 def _run_active_handoff(http: E2EHttpClient, config: E2EConfig, run_id: str) -> None:
@@ -207,9 +212,14 @@ def _run_active_handoff(http: E2EHttpClient, config: E2EConfig, run_id: str) -> 
             raise FullMockE2EError("new Agent could not process a new execution")
     finally:
         executor.abort.set()
-        old.runtime.shutdown()
-        if new is not None:
-            new.runtime.shutdown()
+        try:
+            try:
+                old.runtime.shutdown()
+            finally:
+                if new is not None:
+                    new.runtime.shutdown()
+        finally:
+            _retire_robot_fixture(http, robot_id, config)
 
 
 def _start_agent(config: E2EConfig, robot_id: UUID, name: str) -> AgentFixture:
@@ -276,6 +286,26 @@ def _prepare_robot(http: E2EHttpClient, agent: AgentFixture, config: E2EConfig) 
         ),
         config,
     )
+
+
+def _retire_robot_fixture(http: E2EHttpClient, robot_id: UUID, config: E2EConfig) -> None:
+    """Remove a completed scenario Robot from the next allocation pool."""
+    http.patch(
+        f"/api/v1/admin/robots/{robot_id}",
+        {"operationalStatus": "UNAVAILABLE"},
+    )
+    retired = _wait_for(
+        f"Robot {robot_id} retired",
+        lambda: _find_robot(http, robot_id),
+        lambda value: (
+            value.get("operationalStatus") == "UNAVAILABLE"
+            and value.get("occupied") is False
+            and value.get("currentExecutionId") is None
+        ),
+        config,
+    )
+    if retired.get("operationalStatus") != "UNAVAILABLE":
+        raise FullMockE2EError(f"Robot {robot_id} remained allocation-eligible")
 
 
 def _create_execution(http: E2EHttpClient) -> tuple[str, UUID]:
