@@ -11,10 +11,13 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
+
+from rehearsal_cleanup import run_cleanup_steps
 
 
 class RehearsalError(RuntimeError):
@@ -31,6 +34,14 @@ SERVICE_USER = "poppy-agent-rehearsal"
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
+@dataclass(slots=True)
+class RehearsalResources:
+    service_user_created: bool = False
+    env_created: bool = False
+    wrapper_created: bool = False
+    unit_created: bool = False
+
+
 def main() -> int:
     _guard_environment()
     server_url = os.environ["POPPY_E2E_SERVER_URL"].rstrip("/")
@@ -38,14 +49,20 @@ def main() -> int:
     python_executable = _required_executable("POPPY_SYSTEMD_REHEARSAL_PYTHON")
     server_container = os.environ.get("POPPY_SYSTEMD_SERVER_CONTAINER", "poppy-app")
     robot_id: UUID | None = None
+    resources = RehearsalResources()
+    primary_error: BaseException | None = None
+    exit_code = 1
 
     try:
         _run_static_verify()
-        _ensure_service_user()
+        resources.service_user_created = _ensure_service_user()
         _ensure_source_readable()
         robot_id = _create_robot(server_url, bootstrap_token)
+        resources.env_created = not ENV_PATH.exists()
         _prepare_env(server_url, bootstrap_token, robot_id)
+        resources.wrapper_created = not Path("/run/poppy-agent-systemd-fixture.py").exists()
         wrapper_path = _write_fixture_entrypoint()
+        resources.unit_created = not UNIT_PATH.exists()
         _write_test_unit(python_executable, wrapper_path)
         _systemctl("daemon-reload")
         _systemctl("enable", UNIT_NAME)
@@ -66,14 +83,32 @@ def main() -> int:
         )
         _phase("journald secret safety", _check_journal_safety)
         print("SYSTEMD RECOVERY REHEARSAL PASSED")
-        return 0
+        exit_code = 0
     except (OSError, RehearsalError, ValueError) as exc:
+        primary_error = exc
         print(f"SYSTEMD RECOVERY REHEARSAL FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 1
     finally:
-        _cleanup_unit()
+        cleanup_failures = _cleanup_unit(resources)
         if robot_id is not None:
-            _retire_robot(server_url, bootstrap_token, robot_id)
+            cleanup_failures.extend(
+                run_cleanup_steps(
+                    [
+                        (
+                            "Robot retirement",
+                            lambda: _retire_robot(server_url, bootstrap_token, robot_id),
+                        )
+                    ]
+                )
+            )
+        if cleanup_failures:
+            print(
+                "SYSTEMD RECOVERY REHEARSAL CLEANUP WARNINGS: " + ", ".join(cleanup_failures),
+                file=sys.stderr,
+            )
+            if primary_error is None:
+                exit_code = 1
+
+    return exit_code
 
 
 def _guard_environment() -> None:
@@ -156,7 +191,7 @@ def _run_static_verify() -> None:
     print("systemd unit contract/static verify: PASS (deployment paths normalized)")
 
 
-def _ensure_service_user() -> None:
+def _ensure_service_user() -> bool:
     if (
         subprocess.run(
             ["getent", "passwd", SERVICE_USER], capture_output=True, check=False
@@ -171,6 +206,8 @@ def _ensure_service_user() -> None:
             "/usr/sbin/nologin",
             SERVICE_USER,
         )
+        return True
+    return False
 
 
 def _ensure_source_readable() -> None:
@@ -202,7 +239,16 @@ def _create_robot(server_url: str, token: str) -> UUID:
     return UUID(value)
 
 
-def _prepare_env(server_url: str, token: str, robot_id: UUID, *, delayed: bool = False) -> None:
+def _prepare_env(
+    server_url: str,
+    token: str,
+    robot_id: UUID,
+    *,
+    delayed: bool = False,
+    allow_existing: bool = False,
+) -> None:
+    if ENV_PATH.exists() and not allow_existing:
+        raise RehearsalError(f"refusing to overwrite existing environment file: {ENV_PATH}")
     target = "http://127.0.0.1:18991" if delayed else server_url
     values = {
         "ROBOT_MODE": "mock",
@@ -231,6 +277,8 @@ def _prepare_env(server_url: str, token: str, robot_id: UUID, *, delayed: bool =
 
 def _write_fixture_entrypoint() -> Path:
     path = Path("/run/poppy-agent-systemd-fixture.py")
+    if path.exists():
+        raise RehearsalError(f"refusing to overwrite existing fixture: {path}")
     path.write_text(
         """from uuid import UUID
 from poppy_agent.execution import InterruptibleSleeper, MockExecutionExecutor
@@ -257,6 +305,8 @@ raise SystemExit(main.main())
 
 
 def _write_test_unit(python_executable: Path, wrapper_path: Path) -> None:
+    if UNIT_PATH.exists():
+        raise RehearsalError(f"refusing to overwrite existing unit: {UNIT_PATH}")
     source = PRODUCTION_UNIT.read_text(encoding="utf-8")
     replacements = {
         "Description=Poppy-Agent runtime": (
@@ -283,7 +333,12 @@ def _write_test_unit(python_executable: Path, wrapper_path: Path) -> None:
 
 
 def _clean_start(server_url: str, robot_id: UUID) -> bool:
-    _prepare_env(server_url, os.environ["POPPY_E2E_AGENT_TOKEN"], robot_id)
+    _prepare_env(
+        server_url,
+        os.environ["POPPY_E2E_AGENT_TOKEN"],
+        robot_id,
+        allow_existing=True,
+    )
     _systemctl("start", UNIT_NAME)
     _wait_ready()
     _patch_robot_ready(server_url, robot_id)
@@ -293,11 +348,22 @@ def _clean_start(server_url: str, robot_id: UUID) -> bool:
 
 def _delayed_server_start(server_url: str) -> bool:
     _systemctl("stop", UNIT_NAME)
-    _prepare_env(server_url, os.environ["POPPY_E2E_AGENT_TOKEN"], _robot_from_env(), delayed=True)
+    _prepare_env(
+        server_url,
+        os.environ["POPPY_E2E_AGENT_TOKEN"],
+        _robot_from_env(),
+        delayed=True,
+        allow_existing=True,
+    )
     _systemctl("reset-failed", UNIT_NAME, allow_failure=True)
     _systemctl("start", UNIT_NAME)
     _wait_for_restart()
-    _prepare_env(server_url, os.environ["POPPY_E2E_AGENT_TOKEN"], _robot_from_env())
+    _prepare_env(
+        server_url,
+        os.environ["POPPY_E2E_AGENT_TOKEN"],
+        _robot_from_env(),
+        allow_existing=True,
+    )
     _wait_ready(timeout=25)
     return True
 
@@ -615,21 +681,31 @@ def _phase(name: str, action: Any) -> None:
     print(f"{name}: PASS")
 
 
-def _cleanup_unit() -> None:
-    _systemctl("disable", "--now", UNIT_NAME, allow_failure=True)
-    _systemctl("daemon-reload", allow_failure=True)
-    for path in (UNIT_PATH, ENV_PATH, Path("/run/poppy-agent-systemd-fixture.py")):
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-    if (
-        subprocess.run(
-            ["getent", "passwd", SERVICE_USER], capture_output=True, check=False
-        ).returncode
-        == 0
-    ):
-        _command("userdel", SERVICE_USER, allow_failure=True)
+def _cleanup_unit(resources: RehearsalResources) -> list[str]:
+    steps: list[tuple[str, Any]] = []
+    if resources.unit_created:
+        steps.append(
+            (
+                "systemd stop and disable",
+                lambda: _systemctl("disable", "--now", UNIT_NAME, allow_failure=True),
+            )
+        )
+        steps.append(("unit removal", lambda: UNIT_PATH.unlink(missing_ok=True)))
+        steps.append(
+            ("systemd daemon-reload", lambda: _systemctl("daemon-reload", allow_failure=True))
+        )
+    if resources.env_created:
+        steps.append(("environment removal", lambda: ENV_PATH.unlink(missing_ok=True)))
+    if resources.wrapper_created:
+        steps.append(
+            (
+                "fixture entrypoint removal",
+                lambda: Path("/run/poppy-agent-systemd-fixture.py").unlink(missing_ok=True),
+            )
+        )
+    if resources.service_user_created:
+        steps.append(("service account removal", lambda: _command("userdel", SERVICE_USER)))
+    return run_cleanup_steps(steps)
 
 
 if __name__ == "__main__":

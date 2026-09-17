@@ -31,6 +31,7 @@ from full_mock_e2e import (  # noqa: E402
     _required_string,
     _wait_for,
 )
+from rehearsal_cleanup import run_cleanup_steps  # noqa: E402
 from rehearsal_safety import is_allowed_loopback_server_url  # noqa: E402
 
 from poppy_agent.agent import create_agent  # noqa: E402
@@ -101,11 +102,14 @@ def main() -> int:
 
 
 def _run_idle_fencing(http: E2EHttpClient, config: E2EConfig, run_id: str) -> None:
-    robot_id = _create_robot(http, f"stale-idle-{run_id}")
-    agent_name = f"stale-idle-agent-{run_id}"
-    old = _start_agent(config, robot_id, agent_name)
+    robot_id: UUID | None = None
+    old: AgentFixture | None = None
     new: AgentFixture | None = None
+    primary_error: BaseException | None = None
     try:
+        robot_id = _create_robot(http, f"stale-idle-{run_id}")
+        agent_name = f"stale-idle-agent-{run_id}"
+        old = _start_agent(config, robot_id, agent_name)
         _prepare_robot(http, old, config)
         new = _start_agent(config, robot_id, agent_name)
         _assert_same_identity_with_rotated_credential(old, new)
@@ -119,25 +123,26 @@ def _run_idle_fencing(http: E2EHttpClient, config: E2EConfig, run_id: str) -> No
         if delivery is not None:
             raise FullMockE2EError("new Agent unexpectedly received idle work")
         _assert_same_robot_different_agent_rejected(http, config, robot_id, run_id)
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
-        try:
-            try:
-                old.runtime.shutdown()
-            finally:
-                if new is not None:
-                    new.runtime.shutdown()
-        finally:
-            _retire_robot_fixture(http, robot_id, config)
+        cleanup_failures = _cleanup_fencing_fixture(http, config, robot_id, old, new)
+        if cleanup_failures and primary_error is None:
+            raise FullMockE2EError("idle fencing cleanup failed: " + ", ".join(cleanup_failures))
 
 
 def _run_active_handoff(http: E2EHttpClient, config: E2EConfig, run_id: str) -> None:
-    robot_id = _create_robot(http, f"stale-active-{run_id}")
-    agent_name = f"stale-active-agent-{run_id}"
-    old = _start_agent(config, robot_id, agent_name)
+    robot_id: UUID | None = None
+    old: AgentFixture | None = None
     new: AgentFixture | None = None
     errors: list[BaseException] = []
     executor = FencingAwareExecutor(config.timeout_seconds)
+    primary_error: BaseException | None = None
     try:
+        robot_id = _create_robot(http, f"stale-active-{run_id}")
+        agent_name = f"stale-active-agent-{run_id}"
+        old = _start_agent(config, robot_id, agent_name)
         _prepare_robot(http, old, config)
         session_token, execution_id = _create_execution(http)
         _wait_for_assignment(http, session_token, execution_id, robot_id, config)
@@ -211,16 +216,46 @@ def _run_active_handoff(http: E2EHttpClient, config: E2EConfig, run_id: str) -> 
         result = new.runtime.execution_once(CompleteExecutor())
         if result is None or result.status is not ExecutionStatus.COMPLETED:
             raise FullMockE2EError("new Agent could not process a new execution")
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
         executor.abort.set()
-        try:
-            try:
-                old.runtime.shutdown()
-            finally:
-                if new is not None:
-                    new.runtime.shutdown()
-        finally:
-            _retire_robot_fixture(http, robot_id, config)
+        cleanup_failures = _cleanup_fencing_fixture(http, config, robot_id, old, new)
+        if cleanup_failures and primary_error is None:
+            raise FullMockE2EError("active handoff cleanup failed: " + ", ".join(cleanup_failures))
+
+
+def _cleanup_fencing_fixture(
+    http: E2EHttpClient,
+    config: E2EConfig,
+    robot_id: UUID | None,
+    old: AgentFixture | None,
+    new: AgentFixture | None,
+) -> list[str]:
+    """Reconcile with the newest credential, then stop and retire owned fixtures."""
+
+    steps: list[tuple[str, Any]] = []
+    reconciler = new or old
+    if reconciler is not None:
+        steps.append(
+            (
+                "active execution reconciliation",
+                reconciler.runtime.recover_interrupted_execution,
+            )
+        )
+    if old is not None:
+        steps.append(("old Agent shutdown", old.runtime.shutdown))
+    if new is not None:
+        steps.append(("new Agent shutdown", new.runtime.shutdown))
+    if robot_id is not None:
+        steps.append(
+            (
+                "Robot fixture retirement",
+                lambda: _retire_robot_fixture(http, robot_id, config),
+            )
+        )
+    return run_cleanup_steps(steps)
 
 
 def _start_agent(config: E2EConfig, robot_id: UUID, name: str) -> AgentFixture:
