@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
+from enum import StrEnum
 from inspect import signature
 from threading import Event
 from time import monotonic
@@ -24,12 +25,17 @@ from poppy_agent.execution import (
 from poppy_agent.observability import (
     AGENT_REGISTERED,
     AGENT_STARTING,
+    AUTHENTICATION_FAILURE,
     EXECUTION_ASSIGNED,
     EXECUTION_CANCELLATION_DETECTED,
     EXECUTION_CANCELLATION_REQUESTED,
     EXECUTION_CANCELLED,
     EXECUTION_COMPLETED,
     EXECUTION_FAILED,
+    EXECUTION_INTERRUPTED_BY_TRANSPORT,
+    EXECUTION_RECONCILIATION_COMPLETED,
+    EXECUTION_RECONCILIATION_FAILED,
+    EXECUTION_RECONCILIATION_STARTED,
     EXECUTION_RECOVERY_CHECKED,
     EXECUTION_RECOVERY_COMPLETED,
     EXECUTION_RECOVERY_DETECTED,
@@ -37,14 +43,22 @@ from poppy_agent.observability import (
     EXECUTION_RECOVERY_NO_ACTIVE,
     EXECUTION_RECOVERY_STARTED,
     EXECUTION_STARTED,
+    RUNTIME_DEGRADED,
     RUNTIME_READY,
+    RUNTIME_RESUMED,
     RUNTIME_STOPPED,
     RUNTIME_STOPPING,
+    SERVER_CONNECTIVITY_LOST,
+    SERVER_CONNECTIVITY_RESTORED,
     STARTUP_FAILURE,
     log_event,
     safe_exception_type,
 )
-from poppy_agent.server.client import ServerApiError, ServerClient
+from poppy_agent.server.client import (
+    ServerApiError,
+    ServerClient,
+    ServerTransportError,
+)
 from poppy_agent.server.config import ServerConfig
 from poppy_agent.server.models import (
     AgentRegistrationRequest,
@@ -54,11 +68,19 @@ from poppy_agent.server.models import (
     HeartbeatRobotRequest,
     RobotRegistrationRequest,
     ServerExecutionDelivery,
+    ServerExecutionLifecycleStatus,
     ServerExecutionRecoveryResponse,
     ServerExecutionReportStatus,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class RuntimeConnectivityState(StrEnum):
+    """Connectivity state that gates execution polling."""
+
+    CONNECTED = "CONNECTED"
+    DEGRADED = "DEGRADED"
 
 
 class AgentServerRuntimeError(RuntimeError):
@@ -74,6 +96,8 @@ class AgentServerRuntime:
         self.config = config
         self.agent_id: UUID | None = None
         self.active_execution_id: UUID | None = None
+        self.connectivity_state = RuntimeConnectivityState.CONNECTED
+        self._reconnect_delay_seconds = config.reconnect_initial_delay_seconds
 
     def start(self) -> AgentRegistrationResponse:
         """Start the Robot adapter, register the Agent, and retain its ID in memory."""
@@ -233,72 +257,199 @@ class AgentServerRuntime:
         return self._finish_execution(task, result)
 
     def run_heartbeat_loop(self, stop_event: Event) -> None:
-        """Send heartbeats until stopped; transport failures propagate to the caller."""
+        """Send heartbeats with bounded reconnect handling until stopped."""
+        wait_seconds = 0.0
         while not stop_event.is_set():
-            self.heartbeat_once()
-            if stop_event.wait(self.config.heartbeat_interval_seconds):
+            if stop_event.wait(wait_seconds):
                 return
+            try:
+                self.heartbeat_once()
+                self._mark_connected()
+                wait_seconds = self.config.heartbeat_interval_seconds
+            except Exception as exc:
+                self._log_nonrecoverable_failure(exc)
+                if not self._is_transient_failure(exc):
+                    raise
+                self._mark_degraded(exc)
+                wait_seconds = self._reconnect_delay_seconds
+                self._reconnect_delay_seconds = min(
+                    self.config.reconnect_max_delay_seconds,
+                    self._reconnect_delay_seconds * 2,
+                )
 
     def run_loop(self, stop_event: Event, executor: ExecutionExecutor) -> None:
-        """Run heartbeat and polling schedules while execution runs in one worker."""
+        """Run heartbeat and polling schedules with fail-closed reconnect handling."""
         next_heartbeat = monotonic()
         next_execution_poll = next_heartbeat
+        next_reconnect = next_heartbeat
         future: Future[ExecutionResult] | None = None
         task: ExecutionTask | None = None
         cancellation_token: ExecutionCancellationToken | None = None
         next_cancellation_check = next_heartbeat
         cancellation_monitor_error: Exception | None = None
+        reconciliation_pending = False
         worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="poppy-execution")
         try:
             while not stop_event.is_set():
                 now = monotonic()
-                if (
-                    future is not None
-                    and task is not None
-                    and cancellation_token is not None
-                    and now >= next_cancellation_check
-                ):
-                    try:
-                        self._poll_cancellation(task, cancellation_token)
-                    except Exception as exc:
-                        cancellation_monitor_error = exc
-                        cancellation_token.cancel("execution cancellation status unavailable")
-                    next_cancellation_check += max(0.1, self.config.execution_poll_interval_seconds)
-                if now >= next_heartbeat:
-                    self.heartbeat_once()
-                    next_heartbeat += self.config.heartbeat_interval_seconds
-                if future is None and now >= next_execution_poll:
-                    task = self._poll_and_mark_running()
-                    next_execution_poll += self.config.execution_poll_interval_seconds
-                    if task is not None:
-                        cancellation_token = ExecutionCancellationToken()
-                        future = worker.submit(
-                            _execute_with_optional_cancellation,
-                            executor,
-                            task,
-                            cancellation_token,
+                if self.connectivity_state is RuntimeConnectivityState.DEGRADED:
+                    if now >= next_reconnect:
+                        try:
+                            self.heartbeat_once()
+                            self._mark_connected()
+                            next_heartbeat = now + self.config.heartbeat_interval_seconds
+                            next_execution_poll = now
+                        except Exception as exc:
+                            self._log_nonrecoverable_failure(exc)
+                            if not self._is_transient_failure(exc):
+                                raise
+                            self._mark_degraded(exc, execution_id=self.active_execution_id)
+                            next_reconnect = self._schedule_reconnect(now)
+                    if future is not None and not future.done() and cancellation_token is not None:
+                        self._interrupt_for_transport(task, cancellation_token)
+                        reconciliation_pending = True
+
+                if self.connectivity_state is RuntimeConnectivityState.CONNECTED:
+                    if (
+                        future is not None
+                        and task is not None
+                        and cancellation_token is not None
+                        and now >= next_cancellation_check
+                    ):
+                        try:
+                            self._poll_cancellation(task, cancellation_token)
+                        except Exception as exc:
+                            self._log_nonrecoverable_failure(exc)
+                            if not self._is_transient_failure(exc):
+                                cancellation_monitor_error = exc
+                                cancellation_token.cancel(
+                                    "execution cancellation status unavailable"
+                                )
+                            else:
+                                self._mark_degraded(exc, execution_id=task.execution_id)
+                                self._interrupt_for_transport(task, cancellation_token)
+                                reconciliation_pending = True
+                                next_reconnect = self._schedule_reconnect(now)
+                        next_cancellation_check += max(
+                            0.1, self.config.execution_poll_interval_seconds
                         )
+                    if (
+                        now >= next_heartbeat
+                        and self.connectivity_state is RuntimeConnectivityState.CONNECTED
+                    ):
+                        try:
+                            self.heartbeat_once()
+                            next_heartbeat += self.config.heartbeat_interval_seconds
+                        except Exception as exc:
+                            self._log_nonrecoverable_failure(exc)
+                            if not self._is_transient_failure(exc):
+                                raise
+                            self._mark_degraded(exc, execution_id=self.active_execution_id)
+                            if cancellation_token is not None:
+                                self._interrupt_for_transport(task, cancellation_token)
+                                reconciliation_pending = True
+                            next_reconnect = self._schedule_reconnect(now)
+                    if (
+                        future is None
+                        and task is None
+                        and not reconciliation_pending
+                        and self.connectivity_state is RuntimeConnectivityState.CONNECTED
+                        and now >= next_execution_poll
+                    ):
+                        try:
+                            task = self._poll_and_mark_running()
+                        except Exception as exc:
+                            self._log_nonrecoverable_failure(exc)
+                            if not self._is_transient_failure(exc):
+                                raise
+                            self._mark_degraded(exc, execution_id=self.active_execution_id)
+                            reconciliation_pending = self.active_execution_id is not None
+                            next_reconnect = self._schedule_reconnect(now)
+                        next_execution_poll += self.config.execution_poll_interval_seconds
+                        if task is not None:
+                            cancellation_token = ExecutionCancellationToken()
+                            future = worker.submit(
+                                _execute_with_optional_cancellation,
+                                executor,
+                                task,
+                                cancellation_token,
+                            )
 
                 if future is not None and future.done():
-                    assert task is not None
+                    completed_task = task
                     try:
                         result = future.result()
-                    except Exception:
-                        self._report_failed_best_effort(task)
-                        raise
-                    if cancellation_monitor_error is not None:
-                        self._report_failed_best_effort(task)
+                    except Exception as exc:
+                        result = None
+                        if (
+                            not reconciliation_pending
+                            and self.connectivity_state is RuntimeConnectivityState.CONNECTED
+                        ):
+                            assert completed_task is not None
+                            report_error = self._report_failed_best_effort(completed_task)
+                            if report_error is None or not self._is_transient_failure(report_error):
+                                raise
+                            self._mark_degraded(
+                                report_error, execution_id=completed_task.execution_id
+                            )
+                            reconciliation_pending = True
+                            next_reconnect = self._schedule_reconnect(now)
+                        log_event(
+                            logger,
+                            logging.ERROR,
+                            EXECUTION_RECONCILIATION_FAILED,
+                            agent_id=self.agent_id,
+                            execution_id=(
+                                completed_task.execution_id if completed_task is not None else None
+                            ),
+                            error_type=type(exc).__name__,
+                        )
+                    future = None
+                    if cancellation_monitor_error is not None and not reconciliation_pending:
+                        assert completed_task is not None
+                        self._report_failed_best_effort(completed_task)
                         raise AgentServerRuntimeError(
                             "execution cancellation status could not be verified"
                         ) from cancellation_monitor_error
-                    self._finish_execution(task, result)
-                    future = None
-                    task = None
-                    cancellation_token = None
-                    cancellation_monitor_error = None
+                    elif completed_task is not None and not reconciliation_pending:
+                        try:
+                            assert result is not None
+                            self._finish_execution(completed_task, result)
+                        except Exception as exc:
+                            self._log_nonrecoverable_failure(exc)
+                            if not self._is_transient_failure(exc):
+                                raise
+                            self._mark_degraded(exc, execution_id=completed_task.execution_id)
+                            reconciliation_pending = True
+                            next_reconnect = self._schedule_reconnect(now)
+                        else:
+                            task = None
+                            cancellation_token = None
+                            cancellation_monitor_error = None
+
+                if (
+                    reconciliation_pending
+                    and future is None
+                    and self.connectivity_state is RuntimeConnectivityState.CONNECTED
+                ):
+                    try:
+                        self._reconcile_interrupted_execution(task)
+                    except Exception as exc:
+                        self._log_nonrecoverable_failure(exc)
+                        if not self._is_transient_failure(exc):
+                            raise
+                        self._mark_degraded(exc, execution_id=self.active_execution_id)
+                        next_reconnect = self._schedule_reconnect(now)
+                    else:
+                        reconciliation_pending = False
+                        task = None
+                        cancellation_token = None
+                        cancellation_monitor_error = None
 
                 if future is not None:
-                    wait_seconds = min(0.1, max(0.0, next_heartbeat - monotonic()))
+                    wait_seconds = 0.1
+                elif self.connectivity_state is RuntimeConnectivityState.DEGRADED:
+                    wait_seconds = max(0.0, next_reconnect - monotonic())
                 else:
                     wait_seconds = min(
                         max(0.0, next_heartbeat - monotonic()),
@@ -367,7 +518,9 @@ class AgentServerRuntime:
                 execution_id=task.execution_id,
                 execution_status=ServerExecutionReportStatus.RUNNING.value,
             )
-        except Exception:
+        except Exception as exc:
+            if self._is_transient_failure(exc):
+                raise
             self.active_execution_id = None
             if self._server_status_is_cancelled(task):
                 return None
@@ -494,7 +647,7 @@ class AgentServerRuntime:
         status_value: object = getattr(status, "value", None)
         return status_value == ExecutionStatus.CANCELLED.value
 
-    def _report_failed_best_effort(self, task: ExecutionTask) -> None:
+    def _report_failed_best_effort(self, task: ExecutionTask) -> Exception | None:
         agent_id = self._registered_agent_id()
         try:
             self.server.report_execution_status(
@@ -503,8 +656,8 @@ class AgentServerRuntime:
                 task.robot_id,
                 ServerExecutionReportStatus.FAILED,
             )
-        except Exception:
-            return
+        except Exception as exc:
+            return exc
         log_event(
             logger,
             logging.ERROR,
@@ -515,6 +668,7 @@ class AgentServerRuntime:
             execution_status=ServerExecutionReportStatus.FAILED.value,
         )
         self.active_execution_id = None
+        return None
 
     def _report_delivery_failed_best_effort(self, delivery: ServerExecutionDelivery) -> None:
         agent_id = self._registered_agent_id()
@@ -550,6 +704,142 @@ class AgentServerRuntime:
         finally:
             self.agent.shutdown()
             log_event(logger, logging.INFO, RUNTIME_STOPPED, agent_id=self.agent_id)
+
+    def _is_transient_failure(self, exc: Exception) -> bool:
+        if isinstance(exc, ServerTransportError):
+            return True
+        return isinstance(exc, ServerApiError) and 500 <= exc.status_code < 600
+
+    def _log_nonrecoverable_failure(self, exc: Exception) -> None:
+        if isinstance(exc, ServerApiError) and exc.status_code in {401, 403}:
+            log_event(
+                logger,
+                logging.ERROR,
+                AUTHENTICATION_FAILURE,
+                error_type=type(exc).__name__,
+                status_code=exc.status_code,
+            )
+
+    def _mark_degraded(self, exc: Exception, *, execution_id: UUID | None = None) -> None:
+        if self.connectivity_state is RuntimeConnectivityState.DEGRADED:
+            return
+        self.connectivity_state = RuntimeConnectivityState.DEGRADED
+        log_event(
+            logger,
+            logging.WARNING,
+            SERVER_CONNECTIVITY_LOST,
+            agent_id=self.agent_id,
+            execution_id=execution_id,
+            error_type=type(exc).__name__,
+        )
+        log_event(
+            logger,
+            logging.WARNING,
+            RUNTIME_DEGRADED,
+            agent_id=self.agent_id,
+            execution_id=execution_id,
+        )
+
+    def _mark_connected(self) -> None:
+        was_degraded = self.connectivity_state is RuntimeConnectivityState.DEGRADED
+        self.connectivity_state = RuntimeConnectivityState.CONNECTED
+        self._reconnect_delay_seconds = self.config.reconnect_initial_delay_seconds
+        if was_degraded:
+            log_event(logger, logging.INFO, SERVER_CONNECTIVITY_RESTORED, agent_id=self.agent_id)
+            log_event(logger, logging.INFO, RUNTIME_RESUMED, agent_id=self.agent_id)
+
+    def _interrupt_for_transport(
+        self, task: ExecutionTask | None, cancellation_token: ExecutionCancellationToken
+    ) -> None:
+        if cancellation_token.is_cancelled():
+            return
+        cancellation_token.cancel("server connectivity unavailable")
+        log_event(
+            logger,
+            logging.WARNING,
+            EXECUTION_INTERRUPTED_BY_TRANSPORT,
+            agent_id=self.agent_id,
+            robot_id=task.robot_id if task is not None else None,
+            execution_id=task.execution_id if task is not None else self.active_execution_id,
+        )
+
+    def _schedule_reconnect(self, now: float) -> float:
+        next_attempt = now + self._reconnect_delay_seconds
+        self._reconnect_delay_seconds = min(
+            self.config.reconnect_max_delay_seconds,
+            self._reconnect_delay_seconds * 2,
+        )
+        return next_attempt
+
+    def _reconcile_interrupted_execution(self, task: ExecutionTask | None) -> None:
+        """Reconcile unknown progress without replaying any command."""
+
+        execution_id = task.execution_id if task is not None else self.active_execution_id
+        log_event(
+            logger,
+            logging.INFO,
+            EXECUTION_RECONCILIATION_STARTED,
+            agent_id=self.agent_id,
+            robot_id=task.robot_id if task is not None else None,
+            execution_id=execution_id,
+        )
+        try:
+            response: ServerExecutionRecoveryResponse | None
+            if task is not None:
+                status = self.server.get_execution_status(
+                    self._registered_agent_id(), task.execution_id, task.robot_id
+                ).status
+                if status in {
+                    ServerExecutionLifecycleStatus.COMPLETED,
+                    ServerExecutionLifecycleStatus.FAILED,
+                    ServerExecutionLifecycleStatus.CANCELLED,
+                }:
+                    self.active_execution_id = None
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        EXECUTION_RECONCILIATION_COMPLETED,
+                        agent_id=self.agent_id,
+                        robot_id=task.robot_id,
+                        execution_id=task.execution_id,
+                        execution_status=status.value,
+                    )
+                    return
+                response = self.server.recover_active_execution(
+                    self._registered_agent_id(), task.robot_id
+                )
+                robot_id = task.robot_id
+            else:
+                response = self.recover_interrupted_execution()
+                robot_id = _robot_uuid(self.agent.read_state())
+                if response is None:
+                    self.active_execution_id = None
+                    return
+            self.active_execution_id = None
+            log_event(
+                logger,
+                logging.INFO,
+                EXECUTION_RECONCILIATION_COMPLETED,
+                agent_id=self.agent_id,
+                robot_id=robot_id,
+                execution_id=response.execution_id if response is not None else execution_id,
+                execution_status=(
+                    response.status.value
+                    if response is not None and response.status is not None
+                    else None
+                ),
+                recovery_action=response.action.value if response is not None else None,
+            )
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                EXECUTION_RECONCILIATION_FAILED,
+                agent_id=self.agent_id,
+                execution_id=execution_id,
+                error_type=type(exc).__name__,
+            )
+            raise
 
     def _registration_request(self, snapshot: AgentSnapshot) -> AgentRegistrationRequest:
         return AgentRegistrationRequest(

@@ -71,6 +71,14 @@ and execution polling. An active `ASSIGNED` or `RUNNING` execution is marked
 `FAILED` and its Robot is released by the Server; command payloads are never
 replayed because progress is unknown. Discovery/reconciliation failures abort
 startup. See [`execution-recovery.md`](execution-recovery.md).
+
+During the runtime loop, transient Server transport failures move the runtime to
+`DEGRADED`. New execution polling is blocked until a heartbeat confirms that the
+Server is reachable again. If an execution was active, the local executor receives
+a cooperative cancellation request and the existing Server recovery contract is
+used after reconnection; commands are never replayed. Authentication and response
+contract failures are not treated as transient outages. See
+[`runtime-connectivity.md`](runtime-connectivity.md).
 ## Runtime observability
 
 Agent runtime, execution, cancellation, recovery, and Server transport events use the

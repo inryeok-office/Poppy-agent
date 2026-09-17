@@ -36,6 +36,15 @@ SERVER_REQUEST_RETRY = "server_request_retry"
 SERVER_REQUEST_FAILED = "server_request_failed"
 SERVER_RESPONSE_INVALID = "server_response_invalid"
 UNSTRUCTURED_LOG_SUPPRESSED = "unstructured_log_suppressed"
+SERVER_CONNECTIVITY_LOST = "server_connectivity_lost"
+SERVER_CONNECTIVITY_RESTORED = "server_connectivity_restored"
+RUNTIME_DEGRADED = "runtime_degraded"
+RUNTIME_RESUMED = "runtime_resumed"
+EXECUTION_INTERRUPTED_BY_TRANSPORT = "execution_interrupted_by_transport"
+EXECUTION_RECONCILIATION_STARTED = "execution_reconciliation_started"
+EXECUTION_RECONCILIATION_COMPLETED = "execution_reconciliation_completed"
+EXECUTION_RECONCILIATION_FAILED = "execution_reconciliation_failed"
+AUTHENTICATION_FAILURE = "authentication_failure"
 
 _ALLOWED_CONTEXT = frozenset(
     {

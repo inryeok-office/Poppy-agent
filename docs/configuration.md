@@ -15,6 +15,8 @@ Current placeholders:
 - `POPPY_EXECUTION_POLL_INTERVAL_SECONDS`: Mock-mode execution polling interval; the default is 1 second
 - `POPPY_SERVER_CONNECT_TIMEOUT_SECONDS`, `POPPY_SERVER_READ_TIMEOUT_SECONDS`: HTTP timeouts
 - `POPPY_SERVER_MAX_RETRIES`: bounded transport retry count
+- `POPPY_SERVER_RECONNECT_INITIAL_DELAY_SECONDS`: runtime reconnect backoff initial delay
+- `POPPY_SERVER_RECONNECT_MAX_DELAY_SECONDS`: runtime reconnect backoff upper bound
 - `UNITREE_NETWORK_INTERFACE`: Linux network interface passed to the official SDK, such as `enp2s0`
 - `POPPY_ROBOT_MODEL`, `POPPY_ROBOT_EDITION`, `POPPY_ROBOT_FIRMWARE_VERSION`: explicit Unitree identity metadata when the SDK does not provide it
 - `UNITREE_SDK_VERSION`: explicit Unitree SDK metadata for registration
@@ -29,3 +31,7 @@ enable execution by itself; the readiness contract must also be satisfied. The t
 is never logged or committed.
 The Unitree adapter requires an explicit network interface when that adapter is
 selected; it does not guess a host interface.
+
+Reconnect delays must be finite and positive, with the maximum at least as large
+as the initial delay. They control software reconnect pacing only; they are not
+hardware safety limits or offline-timeout policy.

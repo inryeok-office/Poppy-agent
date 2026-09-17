@@ -28,6 +28,8 @@ class ServerConfig:
     connect_timeout_seconds: float = 5.0
     read_timeout_seconds: float = 10.0
     max_retries: int = 1
+    reconnect_initial_delay_seconds: float = 1.0
+    reconnect_max_delay_seconds: float = 30.0
 
     def __post_init__(self) -> None:
         normalized_url = self.server_url.rstrip("/")
@@ -60,6 +62,13 @@ class ServerConfig:
             raise ServerConfigurationError("server timeouts must be positive")
         if self.max_retries < 0:
             raise ServerConfigurationError("max retries must not be negative")
+        if (
+            not isfinite(self.reconnect_initial_delay_seconds)
+            or not isfinite(self.reconnect_max_delay_seconds)
+            or self.reconnect_initial_delay_seconds <= 0
+            or self.reconnect_max_delay_seconds < self.reconnect_initial_delay_seconds
+        ):
+            raise ServerConfigurationError("reconnect delays must be positive and ordered")
         object.__setattr__(self, "server_url", normalized_url)
 
     @classmethod
@@ -84,6 +93,12 @@ class ServerConfig:
             ),
             read_timeout_seconds=_float_value(values, "POPPY_SERVER_READ_TIMEOUT_SECONDS", 10.0),
             max_retries=_int_value(values, "POPPY_SERVER_MAX_RETRIES", 1),
+            reconnect_initial_delay_seconds=_float_value(
+                values, "POPPY_SERVER_RECONNECT_INITIAL_DELAY_SECONDS", 1.0
+            ),
+            reconnect_max_delay_seconds=_float_value(
+                values, "POPPY_SERVER_RECONNECT_MAX_DELAY_SECONDS", 30.0
+            ),
         )
 
 
