@@ -28,6 +28,7 @@ from full_mock_e2e import (  # noqa: E402
     _required_string,
     _wait_for,
 )
+from rehearsal_safety import is_allowed_loopback_server_url  # noqa: E402
 from stale_agent_fencing_e2e import (  # noqa: E402
     AgentFixture,
     _assert_old_report_did_not_change_terminal_state,
@@ -162,7 +163,7 @@ class RuntimeFixture:
 
 def main() -> int:
     config = E2EConfig.from_environment()
-    if not config.server_url.startswith("http://localhost"):
+    if not is_allowed_loopback_server_url(config.server_url):
         raise FullMockE2EError("operational rehearsal only permits http://localhost")
 
     http = E2EHttpClient(config.server_url, config.http_timeout_seconds, config.agent_token)

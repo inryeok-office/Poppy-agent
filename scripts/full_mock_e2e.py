@@ -12,12 +12,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any
-from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, os.path.join(ROOT, "src"))
+
+from rehearsal_safety import is_allowed_loopback_server_url  # noqa: E402
 
 from poppy_agent.agent import create_agent  # noqa: E402
 from poppy_agent.command import (  # noqa: E402
@@ -42,7 +43,6 @@ from poppy_agent.server import (  # noqa: E402
     ServerExecutionStatusResponse,
 )
 
-LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 COMMAND_CAPABILITIES = {
     "COMMAND_MOVE",
     "COMMAND_TURN",
@@ -82,8 +82,7 @@ class E2EConfig:
     def from_environment(cls) -> E2EConfig:
         server_url = os.environ.get("POPPY_E2E_SERVER_URL", "").strip().rstrip("/")
         agent_token = os.environ.get("POPPY_E2E_AGENT_TOKEN", "")
-        parsed = urlparse(server_url)
-        if parsed.scheme != "http" or parsed.hostname not in LOCAL_HOSTS:
+        if not is_allowed_loopback_server_url(server_url):
             raise FullMockE2EError(
                 "POPPY_E2E_SERVER_URL must be an http localhost URL; production targets are blocked"
             )
