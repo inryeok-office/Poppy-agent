@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -10,6 +11,13 @@ from uuid import UUID
 
 import httpx
 
+from poppy_agent.observability import (
+    SERVER_REQUEST_FAILED,
+    SERVER_REQUEST_RETRY,
+    SERVER_RESPONSE_INVALID,
+    log_event,
+    safe_exception_type,
+)
 from poppy_agent.server.config import ServerConfig
 from poppy_agent.server.models import (
     AgentRegistrationRequest,
@@ -25,6 +33,8 @@ from poppy_agent.server.models import (
     ServerExecutionStateResponse,
     ServerExecutionStatusResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ServerClientError(RuntimeError):
@@ -274,17 +284,50 @@ class ServerClient:
     ) -> dict[str, Any]:
         response = self._request(method, path, payload=payload, params=params)
         if response.status_code != expected_status:
-            raise ServerApiError(response.status_code, _error_code(response))
+            error_code = _error_code(response)
+            log_event(
+                logger,
+                logging.ERROR,
+                SERVER_REQUEST_FAILED,
+                method=method,
+                path=path,
+                status_code=response.status_code,
+            )
+            raise ServerApiError(response.status_code, error_code)
 
         try:
             body = response.json()
         except ValueError as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                SERVER_RESPONSE_INVALID,
+                method=method,
+                path=path,
+                error_type=safe_exception_type(exc),
+            )
             raise ServerResponseError("Poppy-Server returned malformed JSON") from exc
 
         if not isinstance(body, dict) or body.get("success") is not True:
+            log_event(
+                logger,
+                logging.ERROR,
+                SERVER_RESPONSE_INVALID,
+                method=method,
+                path=path,
+                error_type="InvalidResponseEnvelope",
+            )
             raise ServerResponseError("Poppy-Server returned an invalid response envelope")
         data = body.get("data")
         if not isinstance(data, dict):
+            log_event(
+                logger,
+                logging.ERROR,
+                SERVER_RESPONSE_INVALID,
+                method=method,
+                path=path,
+                error_type="InvalidResponseData",
+            )
             raise ServerResponseError("Poppy-Server response data is malformed")
         return data
 
@@ -296,18 +339,59 @@ class ServerClient:
         payload: dict[str, object] | None,
         params: dict[str, str] | None,
     ) -> httpx.Response:
+        max_attempts = self._config.max_retries + 1
         for attempt in range(self._config.max_retries + 1):
             try:
                 return self._client.request(method, path, json=payload, params=params)
             except httpx.TimeoutException as exc:
                 if attempt < self._config.max_retries:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        SERVER_REQUEST_RETRY,
+                        method=method,
+                        path=path,
+                        attempt=attempt + 2,
+                        max_attempts=max_attempts,
+                        error_type=safe_exception_type(exc),
+                    )
                     self._sleep(0.1 * (2**attempt))
                     continue
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    SERVER_REQUEST_FAILED,
+                    method=method,
+                    path=path,
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    error_type=safe_exception_type(exc),
+                )
                 raise ServerTransportError("Poppy-Server request timed out") from exc
             except httpx.TransportError as exc:
                 if attempt < self._config.max_retries:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        SERVER_REQUEST_RETRY,
+                        method=method,
+                        path=path,
+                        attempt=attempt + 2,
+                        max_attempts=max_attempts,
+                        error_type=safe_exception_type(exc),
+                    )
                     self._sleep(0.1 * (2**attempt))
                     continue
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    SERVER_REQUEST_FAILED,
+                    method=method,
+                    path=path,
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    error_type=safe_exception_type(exc),
+                )
                 raise ServerTransportError("Poppy-Server connection failed") from exc
         raise AssertionError("unreachable retry state")
 

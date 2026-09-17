@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from inspect import signature
@@ -20,6 +21,29 @@ from poppy_agent.execution import (
     ExecutionTask,
     UnsupportedExecutionProtocolError,
 )
+from poppy_agent.observability import (
+    AGENT_REGISTERED,
+    AGENT_STARTING,
+    EXECUTION_ASSIGNED,
+    EXECUTION_CANCELLATION_DETECTED,
+    EXECUTION_CANCELLATION_REQUESTED,
+    EXECUTION_CANCELLED,
+    EXECUTION_COMPLETED,
+    EXECUTION_FAILED,
+    EXECUTION_RECOVERY_CHECKED,
+    EXECUTION_RECOVERY_COMPLETED,
+    EXECUTION_RECOVERY_DETECTED,
+    EXECUTION_RECOVERY_FAILED,
+    EXECUTION_RECOVERY_NO_ACTIVE,
+    EXECUTION_RECOVERY_STARTED,
+    EXECUTION_STARTED,
+    RUNTIME_READY,
+    RUNTIME_STOPPED,
+    RUNTIME_STOPPING,
+    STARTUP_FAILURE,
+    log_event,
+    safe_exception_type,
+)
 from poppy_agent.server.client import ServerApiError, ServerClient
 from poppy_agent.server.config import ServerConfig
 from poppy_agent.server.models import (
@@ -33,6 +57,8 @@ from poppy_agent.server.models import (
     ServerExecutionRecoveryResponse,
     ServerExecutionReportStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AgentServerRuntimeError(RuntimeError):
@@ -53,36 +79,107 @@ class AgentServerRuntime:
         """Start the Robot adapter, register the Agent, and retain its ID in memory."""
         if self.agent_id is not None:
             raise AgentServerRuntimeError("Agent is already registered")
+        log_event(logger, logging.INFO, AGENT_STARTING)
         snapshot = self.agent.start()
         try:
             response = self.server.register_agent(self._registration_request(snapshot))
-        except Exception:
+        except Exception as exc:
+            log_event(logger, logging.ERROR, STARTUP_FAILURE, error_type=safe_exception_type(exc))
             self.agent.shutdown()
             raise
         self.agent_id = response.agent_id
+        log_event(
+            logger,
+            logging.INFO,
+            AGENT_REGISTERED,
+            agent_id=response.agent_id,
+            robot_id=snapshot.identity.robot_id,
+        )
         try:
             self.recover_interrupted_execution()
-        except Exception:
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                STARTUP_FAILURE,
+                agent_id=response.agent_id,
+                error_type=safe_exception_type(exc),
+            )
             self.agent_id = None
             self.agent.shutdown()
             raise
+        log_event(logger, logging.INFO, RUNTIME_READY, agent_id=response.agent_id)
         return response
 
     def recover_interrupted_execution(self) -> ServerExecutionRecoveryResponse | None:
         """Reconcile Server-owned active work before any new polling begins."""
         if self.agent_id is None:
             raise AgentServerRuntimeError("Agent must be registered before recovery")
+        log_event(
+            logger,
+            logging.INFO,
+            EXECUTION_RECOVERY_CHECKED,
+            agent_id=self.agent_id,
+        )
         discover = getattr(self.server, "discover_active_execution", None)
         recover = getattr(self.server, "recover_active_execution", None)
         if not callable(discover) and not callable(recover):
+            log_event(logger, logging.INFO, EXECUTION_RECOVERY_NO_ACTIVE, agent_id=self.agent_id)
             return None
         if not callable(discover) or not callable(recover):
             raise AgentServerRuntimeError("Server recovery contract is incomplete")
         robot_id = _robot_uuid(self.agent.read_state())
         active = discover(self.agent_id, robot_id)
         if active is None:
+            log_event(
+                logger,
+                logging.INFO,
+                EXECUTION_RECOVERY_NO_ACTIVE,
+                agent_id=self.agent_id,
+                robot_id=robot_id,
+            )
             return None
-        return cast(ServerExecutionRecoveryResponse, recover(self.agent_id, robot_id))
+        log_event(
+            logger,
+            logging.WARNING,
+            EXECUTION_RECOVERY_DETECTED,
+            agent_id=self.agent_id,
+            robot_id=robot_id,
+            execution_id=active.execution_id,
+            execution_status=active.status.value,
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            EXECUTION_RECOVERY_STARTED,
+            agent_id=self.agent_id,
+            robot_id=robot_id,
+            execution_id=active.execution_id,
+        )
+        try:
+            response = cast(ServerExecutionRecoveryResponse, recover(self.agent_id, robot_id))
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                EXECUTION_RECOVERY_FAILED,
+                agent_id=self.agent_id,
+                robot_id=robot_id,
+                execution_id=active.execution_id,
+                error_type=safe_exception_type(exc),
+            )
+            raise
+        log_event(
+            logger,
+            logging.INFO,
+            EXECUTION_RECOVERY_COMPLETED,
+            agent_id=self.agent_id,
+            robot_id=robot_id,
+            execution_id=response.execution_id,
+            execution_status=response.status.value if response.status is not None else None,
+            recovery_action=response.action.value,
+        )
+        return response
 
     def heartbeat_once(self) -> HeartbeatResponse:
         """Read current Robot state and send one heartbeat."""
@@ -224,6 +321,15 @@ class AgentServerRuntime:
             self._report_delivery_failed_best_effort(delivery)
             raise
         self.active_execution_id = task.execution_id
+        log_event(
+            logger,
+            logging.INFO,
+            EXECUTION_ASSIGNED,
+            agent_id=self.agent_id,
+            robot_id=task.robot_id,
+            execution_id=task.execution_id,
+            protocol_version=task.protocol_version,
+        )
         try:
             if self._server_status_is_cancelled(task):
                 self.active_execution_id = None
@@ -233,6 +339,15 @@ class AgentServerRuntime:
                 task.execution_id,
                 task.robot_id,
                 ServerExecutionReportStatus.RUNNING,
+            )
+            log_event(
+                logger,
+                logging.INFO,
+                EXECUTION_STARTED,
+                agent_id=self.agent_id,
+                robot_id=task.robot_id,
+                execution_id=task.execution_id,
+                execution_status=ServerExecutionReportStatus.RUNNING.value,
             )
         except Exception:
             self.active_execution_id = None
@@ -282,6 +397,20 @@ class AgentServerRuntime:
             else:
                 raise
         self.active_execution_id = None
+        event = {
+            ExecutionStatus.COMPLETED: EXECUTION_COMPLETED,
+            ExecutionStatus.FAILED: EXECUTION_FAILED,
+            ExecutionStatus.CANCELLED: EXECUTION_CANCELLED,
+        }[result.status]
+        log_event(
+            logger,
+            logging.INFO if result.status is not ExecutionStatus.FAILED else logging.ERROR,
+            event,
+            agent_id=agent_id,
+            robot_id=task.robot_id,
+            execution_id=task.execution_id,
+            execution_status=result.status.value,
+        )
         return result
 
     def _execute_with_cancellation(
@@ -319,7 +448,24 @@ class AgentServerRuntime:
             return
         status = get_status(self._registered_agent_id(), task.execution_id, task.robot_id).status
         if status.value == ExecutionStatus.CANCELLED.value:
+            log_event(
+                logger,
+                logging.INFO,
+                EXECUTION_CANCELLATION_DETECTED,
+                agent_id=self._registered_agent_id(),
+                robot_id=task.robot_id,
+                execution_id=task.execution_id,
+                execution_status=status.value,
+            )
             cancellation_token.cancel("server requested cancellation")
+            log_event(
+                logger,
+                logging.INFO,
+                EXECUTION_CANCELLATION_REQUESTED,
+                agent_id=self._registered_agent_id(),
+                robot_id=task.robot_id,
+                execution_id=task.execution_id,
+            )
             self.active_execution_id = None
 
     def _server_status_is_cancelled(self, task: ExecutionTask) -> bool:
@@ -341,6 +487,15 @@ class AgentServerRuntime:
             )
         except Exception:
             return
+        log_event(
+            logger,
+            logging.ERROR,
+            EXECUTION_FAILED,
+            agent_id=agent_id,
+            robot_id=task.robot_id,
+            execution_id=task.execution_id,
+            execution_status=ServerExecutionReportStatus.FAILED.value,
+        )
         self.active_execution_id = None
 
     def _report_delivery_failed_best_effort(self, delivery: ServerExecutionDelivery) -> None:
@@ -354,6 +509,15 @@ class AgentServerRuntime:
             )
         except Exception:
             return
+        log_event(
+            logger,
+            logging.ERROR,
+            EXECUTION_FAILED,
+            agent_id=agent_id,
+            robot_id=delivery.robot_id,
+            execution_id=delivery.execution_id,
+            execution_status=ServerExecutionReportStatus.FAILED.value,
+        )
 
     def _registered_agent_id(self) -> UUID:
         if self.agent_id is None:
@@ -362,10 +526,12 @@ class AgentServerRuntime:
 
     def shutdown(self) -> None:
         """Close server transport and stop the local Agent."""
+        log_event(logger, logging.INFO, RUNTIME_STOPPING, agent_id=self.agent_id)
         try:
             self.server.close()
         finally:
             self.agent.shutdown()
+            log_event(logger, logging.INFO, RUNTIME_STOPPED, agent_id=self.agent_id)
 
     def _registration_request(self, snapshot: AgentSnapshot) -> AgentRegistrationRequest:
         return AgentRegistrationRequest(
