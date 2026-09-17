@@ -71,3 +71,8 @@ and execution polling. An active `ASSIGNED` or `RUNNING` execution is marked
 `FAILED` and its Robot is released by the Server; command payloads are never
 replayed because progress is unknown. Discovery/reconciliation failures abort
 startup. See [`execution-recovery.md`](execution-recovery.md).
+## Runtime observability
+
+Agent runtime, execution, cancellation, recovery, and Server transport events use the
+stable, secret-safe logging contract in [Runtime Observability Contract](runtime-observability.md).
+This improves lifecycle visibility without enabling physical Unitree execution.

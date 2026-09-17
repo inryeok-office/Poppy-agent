@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from threading import Event
 from uuid import UUID
@@ -15,6 +16,12 @@ from poppy_agent.execution import (
     ExecutionStatus,
     ExecutionTask,
     MockExecutionExecutor,
+)
+from poppy_agent.observability import (
+    AGENT_REGISTERED,
+    EXECUTION_RECOVERY_CHECKED,
+    EXECUTION_RECOVERY_NO_ACTIVE,
+    RUNTIME_READY,
 )
 from poppy_agent.server import (
     AgentRegistrationResponse,
@@ -166,6 +173,21 @@ def test_start_reconciles_active_execution_before_runtime_can_poll() -> None:
     assert server.events == ["register", "discover", "recover"]
     assert runtime.active_execution_id is None
     runtime.shutdown()
+
+
+def test_runtime_start_logs_registration_and_recovery_state(caplog) -> None:
+    server = RecordingServer([])
+    runtime = runtime_with_recording_server(server)
+
+    with caplog.at_level(logging.INFO, logger="poppy_agent.server.runtime"):
+        runtime.start()
+        runtime.shutdown()
+
+    events = [record.poppy_event for record in caplog.records]
+    assert AGENT_REGISTERED in events
+    assert EXECUTION_RECOVERY_CHECKED in events
+    assert EXECUTION_RECOVERY_NO_ACTIVE in events
+    assert RUNTIME_READY in events
 
 
 def test_recovery_failure_stops_startup_before_heartbeat_or_polling() -> None:

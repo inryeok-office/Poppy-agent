@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import signal
 import sys
 from signal import Signals
@@ -12,6 +13,12 @@ from uuid import UUID
 from poppy_agent.agent import create_agent
 from poppy_agent.config import AgentConfig, ConfigurationError
 from poppy_agent.execution import MockExecutionExecutor
+from poppy_agent.observability import (
+    STARTUP_FAILURE,
+    configure_logging,
+    log_event,
+    safe_exception_type,
+)
 from poppy_agent.server import (
     AgentServerRuntime,
     AgentServerRuntimeError,
@@ -20,6 +27,8 @@ from poppy_agent.server import (
     ServerConfig,
     ServerConfigurationError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def register_signal_handlers(stop_event: Event) -> None:
@@ -35,6 +44,7 @@ def register_signal_handlers(stop_event: Event) -> None:
 def main() -> int:
     """Run the Agent registration and heartbeat lifecycle."""
     runtime: AgentServerRuntime | None = None
+    configure_logging()
 
     try:
         agent_config = AgentConfig.from_environment()
@@ -47,28 +57,27 @@ def main() -> int:
         stop_event = Event()
         register_signal_handlers(stop_event)
 
-        registration = runtime.start()
-        print(f"Agent registered: {registration.agent_id}")
+        runtime.start()
         if executor is None:
-            print("Heartbeat loop started")
             runtime.run_heartbeat_loop(stop_event)
         else:
-            print("Heartbeat and execution loop started")
             runtime.run_loop(stop_event, executor)
         return 0
     except (ConfigurationError, ServerConfigurationError) as exc:
+        log_event(logger, logging.ERROR, STARTUP_FAILURE, error_type=safe_exception_type(exc))
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 1
     except (AgentServerRuntimeError, ServerClientError, ValueError) as exc:
+        log_event(logger, logging.ERROR, STARTUP_FAILURE, error_type=safe_exception_type(exc))
         print(f"Poppy-Agent failed: {exc}", file=sys.stderr)
         return 1
     except Exception:
+        log_event(logger, logging.ERROR, STARTUP_FAILURE, error_type="UnexpectedError")
         print("Poppy-Agent failed due to an unexpected runtime error", file=sys.stderr)
         return 1
     finally:
         if runtime is not None:
             runtime.shutdown()
-            print("Agent stopped")
 
 
 def _create_mock_executor(config: AgentConfig) -> MockExecutionExecutor | None:
