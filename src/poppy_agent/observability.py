@@ -35,6 +35,7 @@ EXECUTION_RECOVERY_FAILED = "execution_recovery_failed"
 SERVER_REQUEST_RETRY = "server_request_retry"
 SERVER_REQUEST_FAILED = "server_request_failed"
 SERVER_RESPONSE_INVALID = "server_response_invalid"
+UNSTRUCTURED_LOG_SUPPRESSED = "unstructured_log_suppressed"
 
 _ALLOWED_CONTEXT = frozenset(
     {
@@ -82,11 +83,12 @@ class JsonFormatter(logging.Formatter):
     """Render only structured event fields; arbitrary record data is excluded."""
 
     def format(self, record: logging.LogRecord) -> str:
+        event = getattr(record, "poppy_event", None)
         payload: dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "event": getattr(record, "poppy_event", record.getMessage()),
+            "event": event if isinstance(event, str) else UNSTRUCTURED_LOG_SUPPRESSED,
         }
         context = getattr(record, "poppy_context", None)
         if isinstance(context, dict) and context:

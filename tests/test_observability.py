@@ -4,6 +4,7 @@ import logging
 from poppy_agent.observability import (
     AGENT_REGISTERED,
     SERVER_REQUEST_RETRY,
+    UNSTRUCTURED_LOG_SUPPRESSED,
     JsonFormatter,
     log_event,
 )
@@ -53,3 +54,22 @@ def test_json_formatter_emits_event_and_safe_context() -> None:
     assert formatted["event"] == SERVER_REQUEST_RETRY
     assert formatted["context"] == {"attempt": 2, "max_attempts": 3, "path": "/health"}
     assert "hidden" not in formatted["context"]["path"]
+
+
+def test_json_formatter_suppresses_unstructured_message_content() -> None:
+    logger = logging.getLogger("poppy_agent.test.third_party")
+    record = logger.makeRecord(
+        logger.name,
+        logging.ERROR,
+        __file__,
+        1,
+        "request header contains X-Agent-Token=secret and payload=private",
+        (),
+        None,
+    )
+
+    formatted = json.loads(JsonFormatter().format(record))
+
+    assert formatted["event"] == UNSTRUCTURED_LOG_SUPPRESSED
+    assert "secret" not in json.dumps(formatted)
+    assert "private" not in json.dumps(formatted)

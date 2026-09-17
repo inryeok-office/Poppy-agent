@@ -21,6 +21,10 @@ context로 lifecycle을 추적하기 위한 계약이다.
   `execution_recovery_completed`, `execution_recovery_failed`
 - Transport: `server_request_retry`, `server_request_failed`, `server_response_invalid`
 
+표준 logging 경로에 들어온 event 없는 외부/일반 레코드는
+`unstructured_log_suppressed`라는 고정 이벤트로 축약한다. 원래 메시지와 임의 context는
+formatter가 출력하지 않는다.
+
 ## Log levels
 
 - `INFO`: startup/registration/ready/shutdown, assignment, execution terminal 상태,
