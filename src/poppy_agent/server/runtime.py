@@ -315,7 +315,7 @@ class AgentServerRuntime:
 
     def run_loop(self, stop_event: Event, executor: ExecutionExecutor) -> None:
         """Run heartbeat and polling schedules with fail-closed reconnect handling."""
-        self._set_execution_polling_enabled(True)
+        self._set_execution_polling_enabled(True, publish_if_unchanged=True)
         next_heartbeat = monotonic()
         next_execution_poll = next_heartbeat
         next_reconnect = next_heartbeat
@@ -952,8 +952,11 @@ class AgentServerRuntime:
         self._operational_status.set_active_execution(execution_id)
         self._publish_status()
 
-    def _set_execution_polling_enabled(self, enabled: bool) -> None:
-        if self._operational_status.set_execution_polling_enabled(enabled):
+    def _set_execution_polling_enabled(
+        self, enabled: bool, *, publish_if_unchanged: bool = False
+    ) -> None:
+        changed = self._operational_status.set_execution_polling_enabled(enabled)
+        if changed or publish_if_unchanged:
             self._publish_status()
 
     def _mark_failed(self, _exc: Exception) -> None:

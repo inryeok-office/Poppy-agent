@@ -348,6 +348,7 @@ def test_run_loop_publishes_polling_disabled_snapshot_on_exit() -> None:
     server = RecordingServer([None])
     runtime = runtime_with_recording_server(server, poll_interval=1)
     runtime.start()
+    runtime._set_execution_polling_enabled(True)
     published = []
     runtime._publish_status = lambda: published.append(runtime.operational_snapshot())
 
