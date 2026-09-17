@@ -1,8 +1,14 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
-from scripts import server_restart_recovery_e2e as rehearsal
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import server_restart_recovery_e2e as rehearsal  # noqa: E402
 
 
 def test_command_json_requires_non_empty_string_array(monkeypatch: pytest.MonkeyPatch) -> None:
