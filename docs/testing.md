@@ -45,6 +45,22 @@ Unitree SDK, DDS, SportClient, or physical hardware. See
 [`two-agent-mock-e2e.md`](two-agent-mock-e2e.md) for prerequisites and the
 assertion scope.
 
+## Stale Agent Fencing E2E
+
+The stale-Agent harness verifies runtime credential rotation and fail-closed
+handoff for an existing Robot. Run it only against the ephemeral localhost
+Server/PostgreSQL environment:
+
+```bash
+python scripts/stale_agent_fencing_e2e.py
+```
+
+It verifies old credential rejection on heartbeat, polling, status, and
+recovery endpoints; same-agent re-registration; active RUNNING recovery without
+command replay; stale terminal-report protection; Robot release; and new work
+after recovery. It uses Mock executors only. See
+[`stale-agent-fencing.md`](stale-agent-fencing.md).
+
 ## Command Safety Validation
 
 `ExecutionSafetyValidator` is covered by local tests using only mock targets. The
