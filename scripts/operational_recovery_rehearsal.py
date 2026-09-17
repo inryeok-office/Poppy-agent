@@ -28,6 +28,7 @@ from full_mock_e2e import (  # noqa: E402
     _required_string,
     _wait_for,
 )
+from rehearsal_cleanup import run_cleanup_steps  # noqa: E402
 from rehearsal_safety import is_allowed_loopback_server_url  # noqa: E402
 from stale_agent_fencing_e2e import (  # noqa: E402
     AgentFixture,
@@ -173,6 +174,8 @@ def main() -> int:
     replacement: RuntimeFixture | None = None
     replacement_candidates: list[RuntimeFixture] = []
     phase_results: list[str] = []
+    exit_code = 1
+    primary_error: BaseException | None = None
     event_capture = EventCaptureHandler()
     runtime_logger = logging.getLogger("poppy_agent.server.runtime")
     client_logger = logging.getLogger("poppy_agent.server.client")
@@ -269,8 +272,9 @@ def main() -> int:
             _assert_events(event_capture.events)
             print("Operational Recovery Rehearsal PASSED")
             print("Phases: " + ", ".join(phase_results))
-            return 0
+            exit_code = 0
         except Exception as exc:
+            primary_error = exc
             runtime_errors: list[str] = []
             if old is not None:
                 runtime_errors.extend(_error_summary(error) for error in old.errors)
@@ -278,18 +282,50 @@ def main() -> int:
                 runtime_errors.extend(_error_summary(error) for error in candidate.errors)
             suffix = f"; runtime errors={runtime_errors}" if runtime_errors else ""
             print(f"OPERATIONAL RECOVERY REHEARSAL FAILED: {exc}{suffix}", file=sys.stderr)
-            return 1
         finally:
-            _reconcile_before_cleanup(old)
+            cleanup_steps: list[tuple[str, Any]] = []
+            if old is not None:
+                cleanup_steps.append(
+                    ("old runtime reconciliation", lambda: _reconcile_before_cleanup(old))
+                )
             for candidate in replacement_candidates:
-                _reconcile_before_cleanup(candidate)
-            _cleanup_runtime(old)
+                cleanup_steps.append(
+                    (
+                        "replacement runtime reconciliation",
+                        lambda candidate=candidate: _reconcile_before_cleanup(candidate),
+                    )
+                )
+            if old is not None:
+                cleanup_steps.append(("old runtime shutdown", lambda: _cleanup_runtime(old)))
             for candidate in replacement_candidates:
                 if candidate is not old:
-                    _cleanup_runtime(candidate)
+                    cleanup_steps.append(
+                        (
+                            "replacement runtime shutdown",
+                            lambda candidate=candidate: _cleanup_runtime(candidate),
+                        )
+                    )
             if robot_id is not None:
-                _retire_robot_fixture(http, robot_id, config)
-            logging.getLogger().removeHandler(event_capture)
+                cleanup_steps.append(
+                    (
+                        "Robot fixture retirement",
+                        lambda: _retire_robot_fixture(http, robot_id, config),
+                    )
+                )
+            cleanup_steps.append(
+                ("event handler removal", lambda: logging.getLogger().removeHandler(event_capture))
+            )
+            cleanup_failures = run_cleanup_steps(cleanup_steps)
+            if cleanup_failures:
+                print(
+                    "OPERATIONAL RECOVERY REHEARSAL CLEANUP WARNINGS: "
+                    + ", ".join(cleanup_failures),
+                    file=sys.stderr,
+                )
+                if primary_error is None:
+                    exit_code = 1
+
+    return exit_code
 
 
 def _clean_startup(runtime: RuntimeFixture, config: E2EConfig) -> bool:
@@ -598,10 +634,7 @@ def _reconcile_before_cleanup(runtime: RuntimeFixture | None) -> None:
     runtime.stop_event.set()
     if runtime.loop.is_alive():
         runtime.loop.join(timeout=5.0)
-    try:
-        runtime.agent.runtime.recover_interrupted_execution()
-    except Exception:
-        return
+    runtime.agent.runtime.recover_interrupted_execution()
 
 
 def _error_summary(error: BaseException) -> str:
