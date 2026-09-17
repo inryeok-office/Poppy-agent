@@ -67,6 +67,25 @@ The harness verifies the Robot is unoccupied with no current Execution before
 the next scenario proceeds, so repeated runs do not depend on heartbeat
 timeout or direct database mutation.
 
+## Software-only Operational Recovery Rehearsal
+
+The operational recovery rehearsal combines normal execution, an active
+transport outage, authoritative interruption reconciliation, Agent runtime
+replacement, stale credential fencing, operational snapshot checks, and final
+Robot ownership cleanup in one persistent local scenario:
+
+```bash
+python scripts/operational_recovery_rehearsal.py
+```
+
+Run it only against the documented ephemeral localhost Server/PostgreSQL
+environment. The harness uses a controllable client-side transport wrapper and
+the official Robot admin lifecycle API; it does not modify the Server source or
+database directly. It never replays an interrupted command. See
+[`operational-recovery-rehearsal.md`](operational-recovery-rehearsal.md) for
+the phase timeline, snapshot expectations, cleanup contract, and the boundary
+between automated software rehearsal and manual Server/systemd restart checks.
+
 ## Command Safety Validation
 
 `ExecutionSafetyValidator` is covered by local tests using only mock targets. The
