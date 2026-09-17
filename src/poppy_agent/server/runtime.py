@@ -127,9 +127,27 @@ class AgentServerRuntime:
             log_event(logger, logging.INFO, EXECUTION_RECOVERY_NO_ACTIVE, agent_id=self.agent_id)
             return None
         if not callable(discover) or not callable(recover):
+            log_event(
+                logger,
+                logging.ERROR,
+                EXECUTION_RECOVERY_FAILED,
+                agent_id=self.agent_id,
+                error_type="IncompleteRecoveryContract",
+            )
             raise AgentServerRuntimeError("Server recovery contract is incomplete")
         robot_id = _robot_uuid(self.agent.read_state())
-        active = discover(self.agent_id, robot_id)
+        try:
+            active = discover(self.agent_id, robot_id)
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                EXECUTION_RECOVERY_FAILED,
+                agent_id=self.agent_id,
+                robot_id=robot_id,
+                error_type=safe_exception_type(exc),
+            )
+            raise
         if active is None:
             log_event(
                 logger,
