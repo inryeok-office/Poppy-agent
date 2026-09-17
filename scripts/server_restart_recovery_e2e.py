@@ -43,6 +43,7 @@ from operational_recovery_rehearsal import (  # noqa: E402
     _cleanup_runtime,
     _phase,
     _read_snapshot,
+    _reconcile_before_cleanup,
     _start_loop,
     _start_runtime,
     _wait_for_assignment_or_running,
@@ -53,6 +54,8 @@ from operational_recovery_rehearsal import (  # noqa: E402
 from rehearsal_cleanup import run_cleanup_steps  # noqa: E402
 from rehearsal_safety import is_allowed_loopback_server_url  # noqa: E402
 from stale_agent_fencing_e2e import _prepare_robot, _retire_robot_fixture  # noqa: E402
+
+from poppy_agent.execution import ExecutionResult, ExecutionStatus  # noqa: E402
 
 
 class ServerRestartRehearsalError(RuntimeError):
@@ -75,6 +78,8 @@ class RestartExecutor(RehearsalExecutor):
 
     def execute(self, task: Any, cancellation_token: Any = None) -> Any:
         self.command_dispatch_count += 1
+        if self.command_dispatch_count >= 3:
+            return ExecutionResult(task.execution_id, ExecutionStatus.COMPLETED)
         return super().execute(task, cancellation_token=cancellation_token)
 
 
@@ -257,7 +262,7 @@ def main() -> int:
             )
             _phase(
                 "Post-recovery persistent Session execution",
-                _post_recovery_execution(http, runtime, session, robot_id, config),
+                _post_recovery_execution(http, runtime, executor, session, robot_id, config),
             )
             _phase(
                 "Final consistency audit",
@@ -273,11 +278,17 @@ def main() -> int:
             )
         finally:
             cleanup_steps: list[tuple[str, Any]] = []
-            if runtime is not None:
-                cleanup_steps.append(("Agent runtime shutdown", lambda: _cleanup_runtime(runtime)))
             cleanup_steps.append(
                 ("owned Server process restore", lambda: _ensure_server(server, config))
             )
+            if runtime is not None:
+                cleanup_steps.append(
+                    (
+                        "interrupted Execution reconciliation",
+                        lambda: _reconcile_before_cleanup(runtime),
+                    )
+                )
+                cleanup_steps.append(("Agent runtime shutdown", lambda: _cleanup_runtime(runtime)))
             if robot_id is not None:
                 cleanup_steps.append(
                     (
@@ -349,10 +360,14 @@ def _command_from_environment() -> list[str]:
 
 def _server_is_reachable(server_url: str) -> bool:
     parsed = urlsplit(server_url)
-    if parsed.hostname is None or parsed.port is None:
+    try:
+        port = parsed.port or 80
+    except ValueError:
+        return False
+    if parsed.hostname is None:
         return False
     try:
-        with socket.create_connection((parsed.hostname, parsed.port), timeout=0.25):
+        with socket.create_connection((parsed.hostname, port), timeout=0.25):
             return True
     except OSError:
         return False
@@ -488,30 +503,27 @@ def _assert_recovery(
 def _post_recovery_execution(
     http: E2EHttpClient,
     runtime: RuntimeFixture,
+    executor: RestartExecutor,
     session: SessionFixture,
     robot_id: UUID,
     config: E2EConfig,
 ) -> bool:
     execution_id = _create_execution(http, session)
     _wait_for_assignment_or_running(http, session.session_token, execution_id, robot_id, config)
-    result = runtime.agent.runtime.execution_once(_CompleteExecutor())
-    if result is None or result.status.value != "COMPLETED":
-        raise ServerRestartRehearsalError("post-recovery Execution did not complete")
     _wait_for(
         "post-recovery Execution COMPLETED",
         lambda: _execution_status(http, session.session_token, execution_id),
         lambda value: value.get("status") == "COMPLETED",
         config,
     )
+    if executor.command_dispatch_count != 3:
+        raise ServerRestartRehearsalError(
+            "post-recovery Execution was not consumed by the run loop"
+        )
+    if runtime.errors:
+        raise ServerRestartRehearsalError("Agent loop failed during post-recovery Execution")
     _wait_for_robot_release(http, robot_id, config)
     return True
-
-
-class _CompleteExecutor:
-    def execute(self, task: Any, cancellation_token: Any = None) -> Any:
-        from poppy_agent.execution import ExecutionResult, ExecutionStatus
-
-        return ExecutionResult(task.execution_id, ExecutionStatus.COMPLETED)
 
 
 def _final_audit(
