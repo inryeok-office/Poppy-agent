@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from inspect import signature
 from threading import Event
 from time import monotonic
+from typing import cast
 from uuid import UUID
 
 from poppy_agent.agent import Agent, AgentSnapshot
@@ -29,6 +30,7 @@ from poppy_agent.server.models import (
     HeartbeatRobotRequest,
     RobotRegistrationRequest,
     ServerExecutionDelivery,
+    ServerExecutionRecoveryResponse,
     ServerExecutionReportStatus,
 )
 
@@ -58,7 +60,29 @@ class AgentServerRuntime:
             self.agent.shutdown()
             raise
         self.agent_id = response.agent_id
+        try:
+            self.recover_interrupted_execution()
+        except Exception:
+            self.agent_id = None
+            self.agent.shutdown()
+            raise
         return response
+
+    def recover_interrupted_execution(self) -> ServerExecutionRecoveryResponse | None:
+        """Reconcile Server-owned active work before any new polling begins."""
+        if self.agent_id is None:
+            raise AgentServerRuntimeError("Agent must be registered before recovery")
+        discover = getattr(self.server, "discover_active_execution", None)
+        recover = getattr(self.server, "recover_active_execution", None)
+        if not callable(discover) and not callable(recover):
+            return None
+        if not callable(discover) or not callable(recover):
+            raise AgentServerRuntimeError("Server recovery contract is incomplete")
+        robot_id = _robot_uuid(self.agent.read_state())
+        active = discover(self.agent_id, robot_id)
+        if active is None:
+            return None
+        return cast(ServerExecutionRecoveryResponse, recover(self.agent_id, robot_id))
 
     def heartbeat_once(self) -> HeartbeatResponse:
         """Read current Robot state and send one heartbeat."""

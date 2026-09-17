@@ -65,3 +65,9 @@ Server's authoritative Agent execution status while an executor runs and shares
 an ExecutionCancellationToken with cooperative executors. A Server CANCELLED
 state becomes an Agent CANCELLED result; it is not translated to Program STOP
 or a physical emergency stop. See [`execution-cancellation.md`](execution-cancellation.md).
+
+Agent startup also reconciles Server-owned active work before beginning heartbeat
+and execution polling. An active `ASSIGNED` or `RUNNING` execution is marked
+`FAILED` and its Robot is released by the Server; command payloads are never
+replayed because progress is unknown. Discovery/reconciliation failures abort
+startup. See [`execution-recovery.md`](execution-recovery.md).

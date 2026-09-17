@@ -61,7 +61,15 @@ class MockRobotAdapter:
 
     def capabilities(self) -> tuple[str, ...]:
         self._require_initialized()
-        return ("telemetry",)
+        # These are capability codes advertised by the development fixture. The
+        # Server still decides whether each code is VERIFIED for allocation.
+        return (
+            "telemetry",
+            "COMMAND_MOVE",
+            "COMMAND_TURN",
+            "COMMAND_POSTURE",
+            "COMMAND_STOP",
+        )
 
     def shutdown(self) -> None:
         self._initialized = False

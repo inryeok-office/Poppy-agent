@@ -15,7 +15,13 @@ def test_agent_startup_captures_robot_snapshot_and_shutdown() -> None:
     assert agent.state is AgentState.RUNNING
     assert snapshot.identity.robot_id == "test-robot"
     assert snapshot.status.connection_status == "ONLINE"
-    assert snapshot.capabilities == ("telemetry",)
+    assert snapshot.capabilities == (
+        "telemetry",
+        "COMMAND_MOVE",
+        "COMMAND_TURN",
+        "COMMAND_POSTURE",
+        "COMMAND_STOP",
+    )
 
     agent.shutdown()
     agent.shutdown()
