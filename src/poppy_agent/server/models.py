@@ -147,6 +147,13 @@ class ServerExecutionLifecycleStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class ServerExecutionRecoveryAction(StrEnum):
+    """Actions returned by the Agent restart reconciliation endpoint."""
+
+    NO_ACTIVE_EXECUTION = "NO_ACTIVE_EXECUTION"
+    RECOVERED_AS_FAILED = "RECOVERED_AS_FAILED"
+
+
 @dataclass(frozen=True, slots=True)
 class ServerExecutionStatusResponse:
     """Validated status-report response data returned by the server."""
@@ -163,3 +170,23 @@ class ServerExecutionStateResponse:
     execution_id: UUID
     robot_id: UUID
     status: ServerExecutionLifecycleStatus
+
+
+@dataclass(frozen=True, slots=True)
+class ServerActiveExecutionResponse:
+    """Active execution discovered for a bound Robot, if any."""
+
+    execution_id: UUID
+    robot_id: UUID
+    status: ServerExecutionLifecycleStatus
+
+
+@dataclass(frozen=True, slots=True)
+class ServerExecutionRecoveryResponse:
+    """Result of idempotent interrupted-execution reconciliation."""
+
+    robot_id: UUID
+    execution_id: UUID | None
+    previous_status: ServerExecutionLifecycleStatus | None
+    status: ServerExecutionLifecycleStatus | None
+    action: ServerExecutionRecoveryAction

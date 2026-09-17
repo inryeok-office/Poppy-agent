@@ -16,8 +16,11 @@ from poppy_agent.server.models import (
     AgentRegistrationResponse,
     HeartbeatRequest,
     HeartbeatResponse,
+    ServerActiveExecutionResponse,
     ServerExecutionDelivery,
     ServerExecutionLifecycleStatus,
+    ServerExecutionRecoveryAction,
+    ServerExecutionRecoveryResponse,
     ServerExecutionReportStatus,
     ServerExecutionStateResponse,
     ServerExecutionStatusResponse,
@@ -202,6 +205,54 @@ class ServerClient:
             response_execution_id, response_robot_id, response_status
         )
 
+    def discover_active_execution(
+        self, agent_id: UUID, robot_id: UUID
+    ) -> ServerActiveExecutionResponse | None:
+        """Discover the Server-owned active execution for a bound Robot."""
+        data = self._request_data(
+            "GET",
+            f"/api/v1/internal/agents/{agent_id}/robots/{robot_id}/active-execution",
+            expected_status=200,
+        )
+        active = data.get("activeExecution")
+        if active is None:
+            return None
+        if not isinstance(active, dict):
+            raise ServerResponseError("Poppy-Server active execution response is malformed")
+        response_execution_id = _uuid_field(active, "executionId")
+        response_robot_id = _uuid_field(active, "robotId")
+        response_status = _execution_status(active.get("status"))
+        if response_robot_id != robot_id:
+            raise ServerResponseError("Poppy-Server active execution robot does not match request")
+        if response_status not in {
+            ServerExecutionLifecycleStatus.ASSIGNED,
+            ServerExecutionLifecycleStatus.RUNNING,
+        }:
+            raise ServerResponseError("Poppy-Server active execution status is not active")
+        return ServerActiveExecutionResponse(
+            response_execution_id, response_robot_id, response_status
+        )
+
+    def recover_active_execution(
+        self, agent_id: UUID, robot_id: UUID
+    ) -> ServerExecutionRecoveryResponse:
+        """Reconcile one interrupted active execution without replaying commands."""
+        data = self._request_data(
+            "POST",
+            f"/api/v1/internal/agents/{agent_id}/robots/{robot_id}/active-execution/recover",
+            expected_status=200,
+        )
+        response_robot_id = _uuid_field(data, "robotId")
+        if response_robot_id != robot_id:
+            raise ServerResponseError("Poppy-Server recovery robot does not match request")
+        return ServerExecutionRecoveryResponse(
+            robot_id=response_robot_id,
+            execution_id=_optional_uuid_field(data, "executionId"),
+            previous_status=_optional_execution_status(data.get("previousStatus")),
+            status=_optional_execution_status(data.get("status")),
+            action=_recovery_action(data.get("action")),
+        )
+
     def close(self) -> None:
         """Close the underlying HTTP connection pool."""
         self._client.close()
@@ -339,3 +390,30 @@ def _execution_status(value: object) -> ServerExecutionLifecycleStatus:
         return ServerExecutionLifecycleStatus(value)
     except ValueError as exc:
         raise ServerResponseError("Poppy-Server execution status is unsupported") from exc
+
+
+def _optional_execution_status(value: object) -> ServerExecutionLifecycleStatus | None:
+    if value is None:
+        return None
+    return _execution_status(value)
+
+
+def _recovery_action(value: object) -> ServerExecutionRecoveryAction:
+    if not isinstance(value, str):
+        raise ServerResponseError("Poppy-Server recovery action is unsupported")
+    try:
+        return ServerExecutionRecoveryAction(value)
+    except ValueError as exc:
+        raise ServerResponseError("Poppy-Server recovery action is unsupported") from exc
+
+
+def _optional_uuid_field(data: dict[str, Any], name: str) -> UUID | None:
+    value = data.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ServerResponseError("Poppy-Server recovery UUID is malformed")
+    try:
+        return UUID(value)
+    except ValueError as exc:
+        raise ServerResponseError("Poppy-Server recovery UUID is malformed") from exc

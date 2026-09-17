@@ -26,7 +26,13 @@ def test_mock_robot_initialization_identity_status_and_capabilities() -> None:
     assert adapter.identity().model == "mock-model"
     assert adapter.status().battery_percent == 87
     assert adapter.status().current_execution_id is None
-    assert adapter.capabilities() == ("telemetry",)
+    assert adapter.capabilities() == (
+        "telemetry",
+        "COMMAND_MOVE",
+        "COMMAND_TURN",
+        "COMMAND_POSTURE",
+        "COMMAND_STOP",
+    )
 
 
 def test_mock_robot_shutdown_is_safe() -> None:

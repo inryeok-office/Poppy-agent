@@ -22,10 +22,13 @@ from poppy_agent.server import (
     AgentServerRuntimeError,
     HeartbeatRequest,
     HeartbeatResponse,
+    ServerActiveExecutionResponse,
     ServerApiError,
     ServerClient,
     ServerConfig,
     ServerExecutionLifecycleStatus,
+    ServerExecutionRecoveryAction,
+    ServerExecutionRecoveryResponse,
     ServerExecutionReportStatus,
     ServerExecutionStateResponse,
     ServerExecutionStatusResponse,
@@ -132,6 +135,60 @@ def runtime_with_mock_server(handler, *, robot_id: str = ROBOT_ID):
     return AgentServerRuntime(agent, client, server_config)
 
 
+def test_start_reconciles_active_execution_before_runtime_can_poll() -> None:
+    class RecoveryServer(RecordingServer):
+        def discover_active_execution(
+            self, _agent_id: UUID, robot_id: UUID
+        ) -> ServerActiveExecutionResponse:
+            self.events.append("discover")
+            return ServerActiveExecutionResponse(
+                EXECUTION_ID,
+                robot_id,
+                ServerExecutionLifecycleStatus.RUNNING,
+            )
+
+        def recover_active_execution(
+            self, _agent_id: UUID, robot_id: UUID
+        ) -> ServerExecutionRecoveryResponse:
+            self.events.append("recover")
+            return ServerExecutionRecoveryResponse(
+                robot_id,
+                EXECUTION_ID,
+                ServerExecutionLifecycleStatus.RUNNING,
+                ServerExecutionLifecycleStatus.FAILED,
+                ServerExecutionRecoveryAction.RECOVERED_AS_FAILED,
+            )
+
+    server = RecoveryServer([])
+    runtime = runtime_with_recording_server(server)
+    runtime.start()
+
+    assert server.events == ["register", "discover", "recover"]
+    assert runtime.active_execution_id is None
+    runtime.shutdown()
+
+
+def test_recovery_failure_stops_startup_before_heartbeat_or_polling() -> None:
+    class FailingRecoveryServer(RecordingServer):
+        def discover_active_execution(self, _agent_id: UUID, _robot_id: UUID) -> None:
+            self.events.append("discover")
+            raise RuntimeError("recovery unavailable")
+
+        def recover_active_execution(
+            self, _agent_id: UUID, _robot_id: UUID
+        ) -> ServerExecutionRecoveryResponse:
+            raise AssertionError("recovery must not run after discovery failure")
+
+    server = FailingRecoveryServer([])
+    runtime = runtime_with_recording_server(server)
+
+    with pytest.raises(RuntimeError, match="recovery unavailable"):
+        runtime.start()
+
+    assert server.events == ["register", "discover"]
+    runtime.shutdown()
+
+
 def test_runtime_registers_mock_robot_and_sends_heartbeat() -> None:
     paths: list[str] = []
 
@@ -150,6 +207,17 @@ def test_runtime_registers_mock_robot_and_sends_heartbeat() -> None:
                         "acceptedRobotIds": [ROBOT_ID],
                         "agentToken": "issued-agent-token",
                     },
+                    "error": None,
+                },
+            )
+        if request.url.path.endswith("/active-execution"):
+            assert request.method == "GET"
+            assert request.headers["X-Agent-Token"] == "issued-agent-token"
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {"activeExecution": None},
                     "error": None,
                 },
             )
@@ -172,6 +240,7 @@ def test_runtime_registers_mock_robot_and_sends_heartbeat() -> None:
     assert heartbeat.agent_id == AGENT_ID
     assert paths == [
         "/api/v1/internal/agents/register",
+        f"/api/v1/internal/agents/{AGENT_ID}/robots/{ROBOT_ID}/active-execution",
         f"/api/v1/internal/agents/{AGENT_ID}/heartbeat",
     ]
 

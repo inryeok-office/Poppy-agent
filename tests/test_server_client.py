@@ -14,6 +14,8 @@ from poppy_agent.server import (
     ServerClient,
     ServerConfig,
     ServerExecutionLifecycleStatus,
+    ServerExecutionRecoveryAction,
+    ServerExecutionRecoveryResponse,
     ServerExecutionReportStatus,
     ServerExecutionStateResponse,
     ServerExecutionStatusResponse,
@@ -528,6 +530,84 @@ def test_get_execution_status_accepts_assigned_lifecycle_state() -> None:
     client.close()
 
     assert response.status is ServerExecutionLifecycleStatus.ASSIGNED
+
+
+def test_discover_active_execution_maps_bound_running_state() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == (
+            f"/api/v1/internal/agents/{AGENT_ID}/robots/{ROBOT_ID}/active-execution"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "activeExecution": {
+                        "executionId": str(EXECUTION_ID),
+                        "robotId": str(ROBOT_ID),
+                        "status": "RUNNING",
+                    }
+                },
+                "error": None,
+            },
+        )
+
+    client = client_for(handler)
+    response = client.discover_active_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+    assert response is not None
+    assert response.execution_id == EXECUTION_ID
+    assert response.status is ServerExecutionLifecycleStatus.RUNNING
+
+
+def test_discover_active_execution_accepts_no_active_execution() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"success": True, "data": {"activeExecution": None}, "error": None},
+        )
+
+    client = client_for(handler)
+    response = client.discover_active_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+    assert response is None
+
+
+def test_recover_active_execution_maps_reconciliation_result() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == (
+            f"/api/v1/internal/agents/{AGENT_ID}/robots/{ROBOT_ID}/active-execution/recover"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "robotId": str(ROBOT_ID),
+                    "executionId": str(EXECUTION_ID),
+                    "previousStatus": "RUNNING",
+                    "status": "FAILED",
+                    "action": "RECOVERED_AS_FAILED",
+                },
+                "error": None,
+            },
+        )
+
+    client = client_for(handler)
+    response = client.recover_active_execution(AGENT_ID, ROBOT_ID)
+    client.close()
+
+    assert response == ServerExecutionRecoveryResponse(
+        robot_id=ROBOT_ID,
+        execution_id=EXECUTION_ID,
+        previous_status=ServerExecutionLifecycleStatus.RUNNING,
+        status=ServerExecutionLifecycleStatus.FAILED,
+        action=ServerExecutionRecoveryAction.RECOVERED_AS_FAILED,
+    )
 
 
 def test_report_execution_status_rejects_unsupported_request_status_without_transport() -> None:
