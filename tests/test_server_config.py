@@ -17,6 +17,8 @@ def test_server_config_loads_metadata_and_transport_settings() -> None:
             "POPPY_SERVER_CONNECT_TIMEOUT_SECONDS": "2",
             "POPPY_SERVER_READ_TIMEOUT_SECONDS": "4",
             "POPPY_SERVER_MAX_RETRIES": "0",
+            "POPPY_SERVER_RECONNECT_INITIAL_DELAY_SECONDS": "0.5",
+            "POPPY_SERVER_RECONNECT_MAX_DELAY_SECONDS": "8",
         }
     )
 
@@ -24,6 +26,8 @@ def test_server_config_loads_metadata_and_transport_settings() -> None:
     assert config.heartbeat_interval_seconds == 12.5
     assert config.execution_poll_interval_seconds == 1.5
     assert config.max_retries == 0
+    assert config.reconnect_initial_delay_seconds == 0.5
+    assert config.reconnect_max_delay_seconds == 8
     assert "dummy-agent-token" not in repr(config)
 
 

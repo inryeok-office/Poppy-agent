@@ -23,13 +23,18 @@ from poppy_agent.server.models import (
     ServerExecutionStateResponse,
     ServerExecutionStatusResponse,
 )
-from poppy_agent.server.runtime import AgentServerRuntime, AgentServerRuntimeError
+from poppy_agent.server.runtime import (
+    AgentServerRuntime,
+    AgentServerRuntimeError,
+    RuntimeConnectivityState,
+)
 
 __all__ = [
     "AgentRegistrationRequest",
     "AgentRegistrationResponse",
     "AgentServerRuntime",
     "AgentServerRuntimeError",
+    "RuntimeConnectivityState",
     "HeartbeatRequest",
     "HeartbeatResponse",
     "HeartbeatRobotRequest",
