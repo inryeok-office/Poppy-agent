@@ -11,6 +11,7 @@ from poppy_agent.execution import ExecutionResult, ExecutionStatus, ExecutionTas
 from poppy_agent.server import (
     AgentRegistrationResponse,
     AgentServerRuntime,
+    AgentServerRuntimeError,
     ServerApiError,
     ServerConfig,
     ServerExecutionLifecycleStatus,
@@ -227,3 +228,48 @@ def test_runtime_distinguishes_transient_auth_and_contract_failures() -> None:
     assert runtime._is_transient_failure(ServerApiError(503, "TEMPORARY"))
     assert not runtime._is_transient_failure(ServerApiError(401, "AGENT_AUTH_INVALID"))
     assert not runtime._is_transient_failure(ServerResponseError("malformed"))
+
+
+def test_nontransient_cancellation_monitor_error_cannot_become_terminal_success() -> None:
+    class AuthenticationFailureServer(ActiveTransportServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.status_checks = 0
+
+        def get_execution_status(
+            self, _agent_id: UUID, _execution_id: UUID, _robot_id: UUID
+        ) -> ServerExecutionStateResponse:
+            self.status_checks += 1
+            if self.status_checks > 1:
+                raise ServerApiError(401, "AGENT_AUTH_INVALID")
+            return super().get_execution_status(_agent_id, _execution_id, _robot_id)
+
+        def send_heartbeat(self, _agent_id: UUID, _request: HeartbeatRequest) -> HeartbeatResponse:
+            return HeartbeatResponse(AGENT_ID, datetime.now())
+
+    server = AuthenticationFailureServer()
+    runtime = runtime_for(server)
+    runtime.start()
+    executor = BlockingExecutor()
+    stop_event = Event()
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            runtime.run_loop(stop_event, executor)
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = Thread(target=run)
+    thread.start()
+    wait_until(executor.started.is_set)
+    wait_until(lambda: bool(errors))
+    stop_event.set()
+    thread.join(timeout=1)
+    runtime.shutdown()
+
+    assert isinstance(errors[0], AgentServerRuntimeError)
+    assert server.status_reports == [
+        ServerExecutionReportStatus.RUNNING,
+        ServerExecutionReportStatus.FAILED,
+    ]

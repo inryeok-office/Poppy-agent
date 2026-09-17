@@ -411,7 +411,7 @@ class AgentServerRuntime:
                         raise AgentServerRuntimeError(
                             "execution cancellation status could not be verified"
                         ) from cancellation_monitor_error
-                    if completed_task is not None and not reconciliation_pending:
+                    elif completed_task is not None and not reconciliation_pending:
                         try:
                             assert result is not None
                             self._finish_execution(completed_task, result)
