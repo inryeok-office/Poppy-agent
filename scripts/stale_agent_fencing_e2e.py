@@ -31,6 +31,7 @@ from full_mock_e2e import (  # noqa: E402
     _required_string,
     _wait_for,
 )
+from rehearsal_safety import is_allowed_loopback_server_url  # noqa: E402
 
 from poppy_agent.agent import create_agent  # noqa: E402
 from poppy_agent.config import AgentConfig  # noqa: E402
@@ -87,7 +88,7 @@ class CompleteExecutor:
 
 def main() -> int:
     config = E2EConfig.from_environment()
-    if not config.server_url.startswith("http://localhost"):
+    if not is_allowed_loopback_server_url(config.server_url):
         raise FullMockE2EError("stale Agent E2E only permits http://localhost")
     http = E2EHttpClient(config.server_url, config.http_timeout_seconds, config.agent_token)
     run_id = uuid4().hex
