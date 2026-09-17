@@ -535,7 +535,7 @@ def _start_runtime(
         agent_version="0.1.0",
         sdk_version="not-applicable",
         platform="operational-recovery-rehearsal",
-        heartbeat_interval_seconds=1.0,
+        heartbeat_interval_seconds=5.0,
         execution_poll_interval_seconds=config.poll_interval_seconds,
         connect_timeout_seconds=config.http_timeout_seconds,
         read_timeout_seconds=config.http_timeout_seconds,

@@ -67,6 +67,29 @@ The harness verifies the Robot is unoccupied with no current Execution before
 the next scenario proceeds, so repeated runs do not depend on heartbeat
 timeout or direct database mutation.
 
+## systemd / Boot Recovery Rehearsal
+
+The systemd rehearsal is Linux-only and requires an explicitly guarded,
+disposable systemd environment. It uses Mock mode and a temporary
+`poppy-agent-rehearsal.service`; it never starts the production unit or any
+Unitree command path:
+
+```bash
+POPPY_SYSTEMD_REHEARSAL=1 \
+POPPY_E2E_SERVER_URL=http://localhost:8080 \
+POPPY_E2E_AGENT_TOKEN='<local-test-token>' \
+POPPY_SYSTEMD_REHEARSAL_PYTHON=/tmp/poppy-agent-systemd-venv/bin/python \
+python3 scripts/systemd_recovery_rehearsal.py
+```
+
+It verifies systemd unit contract/static syntax, delayed Server startup,
+RuntimeDirectory/status lifecycle, running Server outage and reconnect, process
+crash with active Execution recovery, graceful restart/stop, and journal secret
+safety. It requires root because the temporary system unit is created under
+`/run/systemd/system`; cleanup is bounded and removes the test unit/user. Actual
+host or production reboot is manual-only. See
+[`systemd-boot-recovery.md`](systemd-boot-recovery.md).
+
 ## Software-only Operational Recovery Rehearsal
 
 The operational recovery rehearsal combines normal execution, an active
