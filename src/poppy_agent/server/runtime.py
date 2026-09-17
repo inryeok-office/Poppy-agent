@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
-from enum import StrEnum
 from inspect import signature
 from threading import Event
 from time import monotonic
@@ -54,6 +53,13 @@ from poppy_agent.observability import (
     log_event,
     safe_exception_type,
 )
+from poppy_agent.operational_status import (
+    AgentOperationalSnapshot,
+    OperationalStatusTracker,
+    RuntimeConnectivityState,
+    RuntimeLifecycleState,
+    StatusSnapshotPublisher,
+)
 from poppy_agent.server.client import (
     ServerApiError,
     ServerClient,
@@ -76,13 +82,6 @@ from poppy_agent.server.models import (
 logger = logging.getLogger(__name__)
 
 
-class RuntimeConnectivityState(StrEnum):
-    """Connectivity state that gates execution polling."""
-
-    CONNECTED = "CONNECTED"
-    DEGRADED = "DEGRADED"
-
-
 class AgentServerRuntimeError(RuntimeError):
     """Raised when local Agent state cannot satisfy the server contract."""
 
@@ -98,20 +97,45 @@ class AgentServerRuntime:
         self.active_execution_id: UUID | None = None
         self.connectivity_state = RuntimeConnectivityState.CONNECTED
         self._reconnect_delay_seconds = config.reconnect_initial_delay_seconds
+        self._operational_status = OperationalStatusTracker()
+        self._status_publisher = StatusSnapshotPublisher(
+            getattr(config, "runtime_status_path", None)
+        )
+        self._publish_status()
+
+    def operational_snapshot(self) -> AgentOperationalSnapshot:
+        """Return a consistent, secret-free runtime status snapshot."""
+
+        return self._operational_status.snapshot()
 
     def start(self) -> AgentRegistrationResponse:
         """Start the Robot adapter, register the Agent, and retain its ID in memory."""
         if self.agent_id is not None:
             raise AgentServerRuntimeError("Agent is already registered")
+        self._operational_status.set_lifecycle(RuntimeLifecycleState.STARTING)
+        self._publish_status()
         log_event(logger, logging.INFO, AGENT_STARTING)
-        snapshot = self.agent.start()
+        try:
+            snapshot = self.agent.start()
+        except Exception as exc:
+            self._mark_failed(exc)
+            log_event(logger, logging.ERROR, STARTUP_FAILURE, error_type=safe_exception_type(exc))
+            raise
         try:
             response = self.server.register_agent(self._registration_request(snapshot))
         except Exception as exc:
+            self._log_nonrecoverable_failure(exc)
+            self._mark_failed(exc)
             log_event(logger, logging.ERROR, STARTUP_FAILURE, error_type=safe_exception_type(exc))
             self.agent.shutdown()
             raise
         self.agent_id = response.agent_id
+        self._operational_status.mark_registered(
+            response.agent_id,
+            _robot_uuid(snapshot),
+            at=datetime.now(UTC),
+        )
+        self._publish_status()
         log_event(
             logger,
             logging.INFO,
@@ -122,6 +146,8 @@ class AgentServerRuntime:
         try:
             self.recover_interrupted_execution()
         except Exception as exc:
+            self._log_nonrecoverable_failure(exc)
+            self._mark_failed(exc)
             log_event(
                 logger,
                 logging.ERROR,
@@ -132,6 +158,9 @@ class AgentServerRuntime:
             self.agent_id = None
             self.agent.shutdown()
             raise
+        self._operational_status.mark_recovery_complete()
+        self._operational_status.set_lifecycle(RuntimeLifecycleState.READY)
+        self._publish_status()
         log_event(logger, logging.INFO, RUNTIME_READY, agent_id=response.agent_id)
         return response
 
@@ -162,6 +191,7 @@ class AgentServerRuntime:
         robot_id = _robot_uuid(self.agent.read_state())
         try:
             active = discover(self.agent_id, robot_id)
+            self._record_server_success()
         except Exception as exc:
             log_event(
                 logger,
@@ -200,6 +230,7 @@ class AgentServerRuntime:
         )
         try:
             response = cast(ServerExecutionRecoveryResponse, recover(self.agent_id, robot_id))
+            self._record_server_success()
         except Exception as exc:
             log_event(
                 logger,
@@ -242,10 +273,14 @@ class AgentServerRuntime:
                 ),
             ),
         )
-        return self.server.send_heartbeat(self.agent_id, request)
+
+        response = self.server.send_heartbeat(self.agent_id, request)
+        self._record_server_success(heartbeat=True)
+        return response
 
     def execution_once(self, executor: ExecutionExecutor) -> ExecutionResult | None:
         """Poll, execute, and report one assigned execution without robot commands."""
+        self._operational_status.set_execution_polling_enabled(True)
         task = self._poll_and_mark_running()
         if task is None:
             return None
@@ -279,6 +314,8 @@ class AgentServerRuntime:
 
     def run_loop(self, stop_event: Event, executor: ExecutionExecutor) -> None:
         """Run heartbeat and polling schedules with fail-closed reconnect handling."""
+        self._operational_status.set_execution_polling_enabled(True)
+        self._publish_status()
         next_heartbeat = monotonic()
         next_execution_poll = next_heartbeat
         next_reconnect = next_heartbeat
@@ -458,6 +495,7 @@ class AgentServerRuntime:
                 if stop_event.wait(wait_seconds):
                     return
         finally:
+            self._operational_status.set_execution_polling_enabled(False)
             if future is not None and not future.done():
                 if cancellation_token is not None:
                     cancellation_token.cancel("runtime stopping")
@@ -472,6 +510,7 @@ class AgentServerRuntime:
         snapshot = self.agent.read_state()
         robot_id = _robot_uuid(snapshot)
         delivery = self.server.fetch_next_execution(self.agent_id, robot_id)
+        self._record_server_success()
         if delivery is None:
             return None
         if delivery.robot_id != robot_id:
@@ -489,7 +528,7 @@ class AgentServerRuntime:
         except (CommandProtocolParseError, UnsupportedExecutionProtocolError):
             self._report_delivery_failed_best_effort(delivery)
             raise
-        self.active_execution_id = task.execution_id
+        self._set_active_execution(task.execution_id)
         log_event(
             logger,
             logging.INFO,
@@ -501,7 +540,7 @@ class AgentServerRuntime:
         )
         try:
             if self._server_status_is_cancelled(task):
-                self.active_execution_id = None
+                self._set_active_execution(None)
                 return None
             self.server.report_execution_status(
                 self.agent_id,
@@ -521,7 +560,7 @@ class AgentServerRuntime:
         except Exception as exc:
             if self._is_transient_failure(exc):
                 raise
-            self.active_execution_id = None
+            self._set_active_execution(None)
             if self._server_status_is_cancelled(task):
                 return None
             raise
@@ -551,6 +590,7 @@ class AgentServerRuntime:
                 task.robot_id,
                 terminal_status,
             )
+            self._record_server_success()
         except ServerApiError:
             if result.status is not ExecutionStatus.CANCELLED and self._server_status_is_cancelled(
                 task
@@ -565,9 +605,10 @@ class AgentServerRuntime:
                     task.robot_id,
                     ServerExecutionReportStatus.CANCELLED,
                 )
+                self._record_server_success()
             else:
                 raise
-        self.active_execution_id = None
+        self._set_active_execution(None)
         event = {
             ExecutionStatus.COMPLETED: EXECUTION_COMPLETED,
             ExecutionStatus.FAILED: EXECUTION_FAILED,
@@ -637,13 +678,14 @@ class AgentServerRuntime:
                 robot_id=task.robot_id,
                 execution_id=task.execution_id,
             )
-            self.active_execution_id = None
+            self._set_active_execution(None)
 
     def _server_status_is_cancelled(self, task: ExecutionTask) -> bool:
         get_status = getattr(self.server, "get_execution_status", None)
         if not callable(get_status):
             return False
         status = get_status(self._registered_agent_id(), task.execution_id, task.robot_id).status
+        self._record_server_success()
         status_value: object = getattr(status, "value", None)
         return status_value == ExecutionStatus.CANCELLED.value
 
@@ -656,6 +698,7 @@ class AgentServerRuntime:
                 task.robot_id,
                 ServerExecutionReportStatus.FAILED,
             )
+            self._record_server_success()
         except Exception as exc:
             return exc
         log_event(
@@ -667,7 +710,7 @@ class AgentServerRuntime:
             execution_id=task.execution_id,
             execution_status=ServerExecutionReportStatus.FAILED.value,
         )
-        self.active_execution_id = None
+        self._set_active_execution(None)
         return None
 
     def _report_delivery_failed_best_effort(self, delivery: ServerExecutionDelivery) -> None:
@@ -679,6 +722,7 @@ class AgentServerRuntime:
                 delivery.robot_id,
                 ServerExecutionReportStatus.FAILED,
             )
+            self._record_server_success()
         except Exception:
             return
         log_event(
@@ -698,12 +742,19 @@ class AgentServerRuntime:
 
     def shutdown(self) -> None:
         """Close server transport and stop the local Agent."""
+        self._operational_status.set_lifecycle(RuntimeLifecycleState.STOPPING)
+        self._publish_status()
         log_event(logger, logging.INFO, RUNTIME_STOPPING, agent_id=self.agent_id)
         try:
             self.server.close()
         finally:
-            self.agent.shutdown()
-            log_event(logger, logging.INFO, RUNTIME_STOPPED, agent_id=self.agent_id)
+            try:
+                self.agent.shutdown()
+            finally:
+                self._operational_status.set_lifecycle(RuntimeLifecycleState.STOPPED)
+                self._publish_status()
+                self._status_publisher.clear()
+                log_event(logger, logging.INFO, RUNTIME_STOPPED, agent_id=self.agent_id)
 
     def _is_transient_failure(self, exc: Exception) -> bool:
         if isinstance(exc, ServerTransportError):
@@ -719,11 +770,23 @@ class AgentServerRuntime:
                 error_type=type(exc).__name__,
                 status_code=exc.status_code,
             )
+            self._operational_status.mark_authentication_failed()
+            self._publish_status()
+        elif not self._is_transient_failure(exc):
+            self._mark_failed(exc)
 
     def _mark_degraded(self, exc: Exception, *, execution_id: UUID | None = None) -> None:
         if self.connectivity_state is RuntimeConnectivityState.DEGRADED:
             return
         self.connectivity_state = RuntimeConnectivityState.DEGRADED
+        self._operational_status.set_connectivity(RuntimeConnectivityState.DEGRADED)
+        if self._operational_status.snapshot().lifecycle_state not in {
+            RuntimeLifecycleState.STOPPING,
+            RuntimeLifecycleState.STOPPED,
+            RuntimeLifecycleState.FAILED,
+        }:
+            self._operational_status.set_lifecycle(RuntimeLifecycleState.DEGRADED)
+        self._publish_status()
         log_event(
             logger,
             logging.WARNING,
@@ -743,7 +806,11 @@ class AgentServerRuntime:
     def _mark_connected(self) -> None:
         was_degraded = self.connectivity_state is RuntimeConnectivityState.DEGRADED
         self.connectivity_state = RuntimeConnectivityState.CONNECTED
+        self._operational_status.set_connectivity(RuntimeConnectivityState.CONNECTED)
         self._reconnect_delay_seconds = self.config.reconnect_initial_delay_seconds
+        if self._operational_status.snapshot().recovery_complete:
+            self._operational_status.set_lifecycle(RuntimeLifecycleState.READY)
+        self._publish_status()
         if was_degraded:
             log_event(logger, logging.INFO, SERVER_CONNECTIVITY_RESTORED, agent_id=self.agent_id)
             log_event(logger, logging.INFO, RUNTIME_RESUMED, agent_id=self.agent_id)
@@ -789,12 +856,13 @@ class AgentServerRuntime:
                 status = self.server.get_execution_status(
                     self._registered_agent_id(), task.execution_id, task.robot_id
                 ).status
+                self._record_server_success()
                 if status in {
                     ServerExecutionLifecycleStatus.COMPLETED,
                     ServerExecutionLifecycleStatus.FAILED,
                     ServerExecutionLifecycleStatus.CANCELLED,
                 }:
-                    self.active_execution_id = None
+                    self._set_active_execution(None)
                     log_event(
                         logger,
                         logging.INFO,
@@ -808,14 +876,15 @@ class AgentServerRuntime:
                 response = self.server.recover_active_execution(
                     self._registered_agent_id(), task.robot_id
                 )
+                self._record_server_success()
                 robot_id = task.robot_id
             else:
                 response = self.recover_interrupted_execution()
                 robot_id = _robot_uuid(self.agent.read_state())
                 if response is None:
-                    self.active_execution_id = None
+                    self._set_active_execution(None)
                     return
-            self.active_execution_id = None
+            self._set_active_execution(None)
             log_event(
                 logger,
                 logging.INFO,
@@ -857,6 +926,22 @@ class AgentServerRuntime:
                 ),
             ),
         )
+
+    def _record_server_success(self, *, heartbeat: bool = False) -> None:
+        self._operational_status.mark_server_success(heartbeat=heartbeat, at=datetime.now(UTC))
+        self._publish_status()
+
+    def _set_active_execution(self, execution_id: UUID | None) -> None:
+        self.active_execution_id = execution_id
+        self._operational_status.set_active_execution(execution_id)
+        self._publish_status()
+
+    def _mark_failed(self, _exc: Exception) -> None:
+        self._operational_status.set_lifecycle(RuntimeLifecycleState.FAILED)
+        self._publish_status()
+
+    def _publish_status(self) -> None:
+        self._status_publisher.publish(self._operational_status.snapshot())
 
 
 def _robot_uuid(snapshot: AgentSnapshot) -> UUID:

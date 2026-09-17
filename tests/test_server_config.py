@@ -19,6 +19,7 @@ def test_server_config_loads_metadata_and_transport_settings() -> None:
             "POPPY_SERVER_MAX_RETRIES": "0",
             "POPPY_SERVER_RECONNECT_INITIAL_DELAY_SECONDS": "0.5",
             "POPPY_SERVER_RECONNECT_MAX_DELAY_SECONDS": "8",
+            "POPPY_RUNTIME_STATUS_PATH": " /run/poppy-agent/status.json ",
         }
     )
 
@@ -28,6 +29,7 @@ def test_server_config_loads_metadata_and_transport_settings() -> None:
     assert config.max_retries == 0
     assert config.reconnect_initial_delay_seconds == 0.5
     assert config.reconnect_max_delay_seconds == 8
+    assert config.runtime_status_path == "/run/poppy-agent/status.json"
     assert "dummy-agent-token" not in repr(config)
 
 
