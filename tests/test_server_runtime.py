@@ -22,7 +22,9 @@ from poppy_agent.observability import (
     EXECUTION_RECOVERY_CHECKED,
     EXECUTION_RECOVERY_NO_ACTIVE,
     RUNTIME_READY,
+    RUNTIME_SHUTDOWN_FAILED,
 )
+from poppy_agent.operational_status import RuntimeLifecycleState
 from poppy_agent.server import (
     AgentRegistrationResponse,
     AgentServerRuntime,
@@ -308,6 +310,81 @@ def test_execution_no_work_does_not_call_executor() -> None:
     assert calls == 0
     assert server.status_reports == []
     assert runtime.active_execution_id is None
+
+
+def test_execution_no_work_publishes_polling_enabled_snapshot() -> None:
+    server = RecordingServer([None])
+    runtime = runtime_with_recording_server(server)
+    runtime.start()
+    published = []
+    runtime._publish_status = lambda: published.append(runtime.operational_snapshot())
+
+    assert runtime.execution_once(lambda _task: None) is None  # type: ignore[arg-type]
+
+    assert any(snapshot.accepting_new_execution for snapshot in published)
+    runtime.shutdown()
+
+
+def test_execution_lifecycle_publishes_active_and_released_snapshots() -> None:
+    server = RecordingServer([assigned_delivery()])
+    runtime = runtime_with_recording_server(server)
+    runtime.start()
+    published = []
+    runtime._publish_status = lambda: published.append(runtime.operational_snapshot())
+
+    class CompletingExecutor:
+        def execute(self, task: ExecutionTask) -> ExecutionResult:
+            return ExecutionResult(task.execution_id, ExecutionStatus.COMPLETED)
+
+    result = runtime.execution_once(CompletingExecutor())
+
+    assert result is not None
+    assert any(snapshot.active_execution_id == EXECUTION_ID for snapshot in published)
+    assert published[-1].active_execution_id is None
+    runtime.shutdown()
+
+
+def test_run_loop_publishes_polling_disabled_snapshot_on_exit() -> None:
+    server = RecordingServer([None])
+    runtime = runtime_with_recording_server(server, poll_interval=1)
+    runtime.start()
+    runtime._set_execution_polling_enabled(True)
+    published = []
+    runtime._publish_status = lambda: published.append(runtime.operational_snapshot())
+
+    class StopAfterFirstWait(Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            self.set()
+            return True
+
+    runtime.run_loop(StopAfterFirstWait(), type("Executor", (), {})())  # type: ignore[arg-type]
+
+    assert any(snapshot.accepting_new_execution for snapshot in published)
+    assert published[-1].accepting_new_execution is False
+    runtime.shutdown()
+
+
+def test_shutdown_failure_publishes_failed_and_not_stopped(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    runtime = runtime_with_recording_server(RecordingServer([]))
+    runtime.start()
+    clear_calls: list[bool] = []
+    monkeypatch.setattr(runtime._status_publisher, "clear", lambda: clear_calls.append(True))
+
+    def failing_shutdown() -> None:
+        raise RuntimeError("mock shutdown failure")
+
+    monkeypatch.setattr(runtime.agent, "shutdown", failing_shutdown)
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError, match="mock shutdown failure"):
+            runtime.shutdown()
+
+    snapshot = runtime.operational_snapshot()
+    assert snapshot.lifecycle_state is RuntimeLifecycleState.FAILED
+    assert "runtime_shutdown_failed" in caplog.text
+    assert RUNTIME_SHUTDOWN_FAILED in caplog.text
+    assert not clear_calls
 
 
 @pytest.mark.parametrize(
