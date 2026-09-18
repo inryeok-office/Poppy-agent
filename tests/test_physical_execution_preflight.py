@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from scripts.physical_execution_preflight import run_preflight
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from physical_execution_preflight import run_preflight  # noqa: E402
 
 
 def test_software_only_physical_execution_preflight() -> None:
