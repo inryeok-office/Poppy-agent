@@ -187,6 +187,10 @@ supervising operator와 공식 장비 안내가 검증 시작 전에 확인해�
 중단 이후에는 원인을 기록하고 owner/operator가 재개를 명시적으로 승인하기
 전까지 Physical Readiness를 승격하지 않는다.
 
+검증이 실제로 시작되기 전의 취소나 사전조건 미충족은 `NOT STARTED`로 기록한다.
+검증이 시작된 뒤 위 abort condition이 발생하면 `ABORTED`라는 별도 성공/중간
+상태를 사용하지 않고 반드시 `FAILED`로 기록한다.
+
 ## Rollback / Disable
 
 검증 중 언제든 software physical path를 disable할 수 있어야 한다. disable은

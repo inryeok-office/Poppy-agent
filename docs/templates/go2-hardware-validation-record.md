@@ -8,7 +8,9 @@
 
 - Date/time:
 - Validation record reference:
-- Final decision: `NOT STARTED` / `PASSED` / `FAILED` / `ABORTED`
+- Final decision: `NOT STARTED` / `PASSED` / `FAILED`
+- If validation has started and an immediate-abort condition occurs, record `FAILED`;
+  do not use a separate `ABORTED` state.
 - Remaining blockers:
 
 ## Approval Checklist
