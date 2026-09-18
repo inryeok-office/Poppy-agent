@@ -15,6 +15,7 @@ from poppy_agent.config import AgentConfig, ConfigurationError
 from poppy_agent.execution import MockExecutionExecutor, PhysicalExecutionBlockedError
 from poppy_agent.hardware import create_unitree_execution_executor
 from poppy_agent.observability import (
+    RUNTIME_SHUTDOWN_FAILED,
     STARTUP_FAILURE,
     configure_logging,
     log_event,
@@ -86,10 +87,25 @@ def main() -> int:
             if runtime is not None:
                 runtime.shutdown()
         finally:
-            if executor is not None:
-                shutdown = getattr(executor, "shutdown", None)
-                if callable(shutdown):
-                    shutdown()
+            _shutdown_executor_safely(executor)
+
+
+def _shutdown_executor_safely(executor: object | None) -> None:
+    """Release executor resources without masking an earlier lifecycle result."""
+    if executor is None:
+        return
+    shutdown = getattr(executor, "shutdown", None)
+    if not callable(shutdown):
+        return
+    try:
+        shutdown()
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            RUNTIME_SHUTDOWN_FAILED,
+            error_type=safe_exception_type(exc),
+        )
 
 
 def _create_executor(config: AgentConfig) -> MockExecutionExecutor | None:

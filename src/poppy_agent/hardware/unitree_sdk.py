@@ -96,6 +96,7 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
         if sdk_client is not None and sdk_client_factory is not None:
             raise ValueError("provide sdk_client or sdk_client_factory, not both")
         self._sdk_client = sdk_client
+        self._client_acquired = sdk_client is not None
         self._sdk_client_factory = sdk_client_factory or (
             lambda: default_unitree_sport_client_factory(network_interface)
         )
@@ -121,6 +122,8 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
                 raise UnitreeSdkCommandError(
                     f"Unitree client factory failed: {type(exc).__name__}"
                 ) from exc
+            self._sdk_client = client
+            self._client_acquired = True
         init = getattr(client, "Init", None)
         if not callable(init):
             raise UnitreeSdkCommandError("Unitree SDK client does not provide Init")
@@ -132,7 +135,6 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
             ) from exc
         if result is not None and _normalize_result(result, "Init") is not True:
             raise UnitreeSdkCommandError("Unitree SDK initialization reported failure")
-        self._sdk_client = client
         self._initialized = True
 
     def sit(self) -> bool:
@@ -160,10 +162,11 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
 
     def shutdown(self) -> None:
         """Close the SDK object when it exposes a close lifecycle method."""
-        if not self._initialized:
+        if not self._client_acquired:
             return
         client = self._sdk_client
         self._initialized = False
+        self._client_acquired = False
         if client is None:
             return
         close = getattr(client, "Close", None)

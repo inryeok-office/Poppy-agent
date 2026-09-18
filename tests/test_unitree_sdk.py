@@ -159,13 +159,16 @@ def test_command_adapter_lifecycle_and_posture_mapping() -> None:
 
 
 def test_command_adapter_initialization_failure_is_normalized_and_sanitized() -> None:
-    client = UnitreeSdkCommandClient(sdk_client=FakeSdkClient(fail_init=True))
+    sdk = FakeSdkClient(fail_init=True)
+    client = UnitreeSdkCommandClient(sdk_client=sdk)
 
     with pytest.raises(UnitreeSdkCommandError, match="initialization failed") as error:
         client.initialize()
 
     assert "sdk initialization secret" not in str(error.value)
     assert client.initialized is False
+    client.shutdown()
+    assert sdk.calls == [("Init", ()), ("Close", ())]
 
 
 def test_command_adapter_requires_explicit_motion_mapping() -> None:

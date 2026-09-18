@@ -160,3 +160,19 @@ def test_main_fails_closed_before_sdk_for_blocked_unitree_execution(
     assert main_module.main() == 1
     assert FakeRuntime.instances[0].calls == ["shutdown"]
     assert FakeRuntime.instances[0].executors == []
+
+
+def test_executor_shutdown_failure_is_logged_without_changing_success(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    patch_dependencies(monkeypatch)
+
+    class FailingExecutor:
+        def shutdown(self) -> None:
+            raise RuntimeError("shutdown secret")
+
+    monkeypatch.setattr(main_module, "_create_executor", lambda _config: FailingExecutor())
+
+    assert main_module.main() == 0
+    assert "shutdown secret" not in caplog.text
+    assert "runtime_shutdown_failed" in caplog.text
