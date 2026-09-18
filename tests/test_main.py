@@ -137,7 +137,7 @@ def test_main_wires_mock_executor_only_for_mock_mode(monkeypatch: pytest.MonkeyP
     assert isinstance(FakeRuntime.instances[0].executors[0], main_module.MockExecutionExecutor)
 
 
-def test_main_keeps_unitree_mode_on_heartbeat_without_executor(
+def test_main_fails_closed_before_sdk_for_blocked_unitree_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     patch_dependencies(monkeypatch)
@@ -148,11 +148,15 @@ def test_main_keeps_unitree_mode_on_heartbeat_without_executor(
             lambda cls: type(
                 "UnitreeConfig",
                 (),
-                {"robot_mode": "unitree", "enable_physical_execution": True},
+                {
+                    "robot_mode": "unitree",
+                    "robot_id": str(AGENT_ID),
+                    "enable_physical_execution": True,
+                },
             )()
         ),
     )
 
-    assert main_module.main() == 0
-    assert FakeRuntime.instances[0].calls == ["start", "run_heartbeat_loop", "shutdown"]
+    assert main_module.main() == 1
+    assert FakeRuntime.instances[0].calls == ["shutdown"]
     assert FakeRuntime.instances[0].executors == []

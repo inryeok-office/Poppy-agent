@@ -20,7 +20,7 @@ Physical Readiness blocker를 현재 코드, 테스트, 운영 문서 evidence�
 | Blocker | Status | Current evidence | Remaining gap | Next issue |
 | --- | --- | --- | --- | --- |
 | `PHYSICAL_EXECUTION_DISABLED` | `PARTIALLY_RESOLVED` | `PhysicalReadinessEvaluator`와 `PhysicalExecutionGate`가 enable flag와 모든 evidence를 함께 검사하며, 기본 flag는 `false`다. `tests/test_physical_readiness.py`가 flag만으로 gate를 통과할 수 없음을 검증한다. | 비활성화는 의도된 안전 상태다. 물리 실행을 안전하게 활성화할 근거는 아직 없다. | #76, #77, #78 순차 검토 |
-| `REAL_COMMAND_CLIENT_MISSING` | `UNRESOLVED` | `src/poppy_agent/hardware/unitree.py`에는 dependency-injected `UnitreeCommandClient` protocol과 `FakeUnitreeCommandClient`만 있다. 문서도 real client가 구현·wiring되지 않았다고 명시한다. | 실제 SDK client와 production adapter의 구현·검토가 필요하다. | #76 |
+| `REAL_COMMAND_CLIENT_MISSING` | `RESOLVED` | `src/poppy_agent/hardware/unitree_sdk.py`에 optional lazy `UnitreeSdkCommandClient` adapter와 공식 `SportClient` factory seam이 있다. `tests/test_unitree_sdk.py`가 SDK double lifecycle, posture/status mapping, unavailable/error 처리를 검증하고 `tests/test_main.py`가 blocked Unitree startup을 검증한다. | readiness evidence는 여전히 explicit input이며, SDK 설치·실제 장비 검증·물리 enablement는 남아 있다. | #77, #78 |
 | `PRODUCTION_MOTION_PROFILE_UNAPPROVED` | `REQUIRES_OWNER_APPROVAL` | `MotionProfile`은 명시적으로 주입되는 test planning 값이고 production default가 없다. `tests/test_motion_strategy.py`는 deterministic planning만 검증한다. | 실제 운영 profile, 속도·가감속·완료 semantics의 authoritative 결정과 승인 필요. | #76, #78 |
 | `PHYSICAL_LIMITS_UNDEFINED` | `REQUIRES_OWNER_APPROVAL` | safety/readiness 문서가 거리·속도·각도·가속·제동·배터리·장애물·토크·latency 값을 `TBD`로 유지한다. 코드에는 이를 production limit로 가장하는 default가 없다. | 장비·제품 source 기반의 제한값과 승인 필요. | #78 |
 | `PRESET_POLICY_UNDEFINED` | `REQUIRES_OWNER_APPROVAL` | `ExecutionSafetyValidator`와 Unitree backend는 명시적 allow-list가 없으면 PRESET을 fail-closed한다. Fake trace는 policy evidence로 취급하지 않는다. | allow-list, mapping, unsupported 동작의 정책 결정과 승인 필요. | #77, #78 |
@@ -58,8 +58,9 @@ Operational readiness는 별도 개념이다. Agent operational snapshot의 `REA
   controlled hardware validation 계획을 문서화하는 대상이다. 문서 완료가 hardware 승인이나
   실제 검증 완료를 의미하지 않는다.
 
-따라서 이 감사에서는 #76~#78에 포함된 gap에 대해 중복 Issue를 만들지 않았고, Issue body도
-변경하지 않았다. 현재 확인된 별도 blocker는 없었다.
+따라서 #76 완료로 real command client software boundary만 `RESOLVED`로 갱신한다.
+나머지 물리 실행 전제 조건은 해제하지 않는다. 이 PR에서는 #77~#78과 중복되는 새
+Issue를 만들지 않았고, Issue body도 변경하지 않았다.
 
 ## 안전 경계
 

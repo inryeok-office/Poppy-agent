@@ -23,7 +23,7 @@ ExecutionSafetyValidator
     -> UnitreeCommandBackend
     -> UnitreeCommandClient
     -> FakeUnitreeCommandClient (tests only)
-    -> real SDK client (disabled)
+    -> UnitreeSdkCommandClient (optional, readiness-gated)
 ```
 
 This document does not authorize or implement Unitree control, physical movement,
@@ -176,7 +176,8 @@ execution.
 only when an explicit, injected strategy can create a fake-only plan; it does not
 claim that the physical distance/angle versus velocity semantics are resolved.
 It rejects PRESET without explicit policy and handles program STOP without
-mapping it to a physical stop operation. Only the inert `FakeUnitreeCommandClient`
-is available in this phase.
+mapping it to a physical stop operation. The optional `UnitreeSdkCommandClient`
+adapts the official SDK boundary without importing it at module load; it is not
+created or initialized until the Physical Execution Gate passes.
 No condition in this document is a substitute for an operator or hardware
 emergency-stop procedure.
