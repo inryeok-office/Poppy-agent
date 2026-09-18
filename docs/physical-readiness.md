@@ -19,6 +19,13 @@ Hardware validation status: NOT TESTED ON HARDWARE
 software evidence는 physical execution 승인이나 hardware validation 완료를 의미하지
 않으며, 모든 물리 실행 전제 조건은 계속 fail-closed로 평가된다.
 
+실제 장비 검증에 진입하기 위한 승인 역할, authoritative 제약 source, 관찰 항목,
+즉시 중단 조건과 evidence 기록 형식은
+[`go2-hardware-validation-plan.md`](go2-hardware-validation-plan.md)와
+[`templates/go2-hardware-validation-record.md`](templates/go2-hardware-validation-record.md)에
+정의한다. 이 계획서와 template의 작성·merge는 승인 완료나 hardware validation 완료를
+뜻하지 않는다.
+
 The current Agent contains an optional, lazy real Unitree command adapter, but
 `ROBOT_MODE=unitree` remains registration/telemetry-only unless the readiness
 gate is explicitly satisfied. The adapter is not initialized in the current
