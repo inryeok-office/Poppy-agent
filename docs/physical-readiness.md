@@ -14,6 +14,11 @@ NOT READY FOR PHYSICAL EXECUTION
 Hardware validation status: NOT TESTED ON HARDWARE
 ```
 
+현재 blocker의 상태·evidence·remaining gap은
+[`pre-hardware-gap-audit.md`](pre-hardware-gap-audit.md)에 기록한다. 이 감사 문서의
+software evidence는 physical execution 승인이나 hardware validation 완료를 의미하지
+않으며, 모든 물리 실행 전제 조건은 계속 fail-closed로 평가된다.
+
 The current Agent has no real Unitree command client and `ROBOT_MODE=unitree`
 remains registration/telemetry-only. The Fake Unitree client and test motion
 profiles are test doubles, not physical-readiness evidence.
