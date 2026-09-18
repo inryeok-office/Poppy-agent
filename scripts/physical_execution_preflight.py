@@ -17,8 +17,9 @@ from pathlib import Path
 from uuid import UUID
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT / "src"))
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from poppy_agent.command import (  # noqa: E402
     CommandType,
@@ -149,6 +150,7 @@ class LocalExecutionAuthority:
     available: bool = True
     status: str = "RUNNING"
     transitions: list[str] = field(default_factory=lambda: ["CONNECTED"])
+    reconcile_calls: int = 0
 
     def poll(self) -> str:
         if not self.available:
@@ -159,10 +161,18 @@ class LocalExecutionAuthority:
         self.available = False
         self.transitions.append("DEGRADED")
 
-    def reconnect_and_reconcile(self) -> None:
+    def reconnect(self) -> None:
         self.available = True
         self.transitions.append("CONNECTED")
+
+    def reconcile_interrupted(self, command_payload: str) -> str:
+        if not self.available:
+            raise ConnectionError("cannot reconcile while authority is unavailable")
+        if command_payload != self.command_payload:
+            raise PhysicalExecutionPreflightError("reconciliation payload changed")
+        self.reconcile_calls += 1
         self.status = "FAILED"
+        return self.status
 
 
 class DisconnectingSleeper(RecordingSleeper):
@@ -442,6 +452,11 @@ def _mapped_motion_phase() -> str:
         moves = [call for call in sdk.dispatch_calls if call.operation == "Move"]
         if result.status is not ExecutionStatus.COMPLETED or len(moves) != 2:
             raise PhysicalExecutionPreflightError("test-only motion mapping mismatch")
+        if [call.arguments for call in moves] != [
+            (0.25, 0.0, 0.0),
+            (0.0, 0.0, 0.5),
+        ]:
+            raise PhysicalExecutionPreflightError("Move argument mapping mismatch")
         if sleeper.durations != [2.0, 1.0]:
             raise PhysicalExecutionPreflightError("motion duration planning mismatch")
         return "Move-shaped calls=2 physical_transport=recording"
@@ -585,10 +600,17 @@ def _disconnect_phase() -> str:
         pass
     else:
         raise PhysicalExecutionPreflightError("polling continued while authority was unavailable")
-    authority.reconnect_and_reconcile()
+    authority.reconnect()
+    reconciled_payload = authority.poll()
+    terminal_status = authority.reconcile_interrupted(reconciled_payload)
     if authority.transitions != ["CONNECTED", "DEGRADED", "CONNECTED"]:
         raise PhysicalExecutionPreflightError("connectivity transition mismatch")
-    if authority.status != "FAILED" or dispatch_count != 1 or sdk.duplicate_dispatch_count != 0:
+    if (
+        terminal_status != "FAILED"
+        or authority.reconcile_calls != 1
+        or dispatch_count != len(sdk.dispatch_calls)
+        or sdk.duplicate_dispatch_count != 0
+    ):
         raise PhysicalExecutionPreflightError("reconciliation/replay contract mismatch")
     return "CONNECTED->DEGRADED->CONNECTED terminal=FAILED replay=0"
 
