@@ -19,9 +19,11 @@ Hardware validation status: NOT TESTED ON HARDWARE
 software evidence는 physical execution 승인이나 hardware validation 완료를 의미하지
 않으며, 모든 물리 실행 전제 조건은 계속 fail-closed로 평가된다.
 
-The current Agent has no real Unitree command client and `ROBOT_MODE=unitree`
-remains registration/telemetry-only. The Fake Unitree client and test motion
-profiles are test doubles, not physical-readiness evidence.
+The current Agent contains an optional, lazy real Unitree command adapter, but
+`ROBOT_MODE=unitree` remains registration/telemetry-only unless the readiness
+gate is explicitly satisfied. The adapter is not initialized in the current
+blocked configuration. The Fake Unitree client and test motion profiles are
+test doubles, not physical-readiness evidence.
 
 ## Readiness architecture
 
@@ -31,7 +33,7 @@ AgentConfig.POPPY_ENABLE_PHYSICAL_EXECUTION
     -> PhysicalReadinessEvaluator
     -> PhysicalExecutionReadiness
     -> PhysicalExecutionGate
-    -> future physical executor (disabled)
+    -> gated Unitree command adapter (disabled)
 ```
 
 `PhysicalExecutionReadiness` is deterministic and contains `ready` plus an
@@ -60,9 +62,10 @@ would require both the flag and a fully ready evaluation:
 physical_execution_enabled == true AND readiness.ready == true
 ```
 
-The current production runtime still creates an executor only for `mock` mode;
-Unitree mode does not obtain a command executor. No force, unsafe, skip-safety,
-or development bypass is provided.
+The current production runtime still creates an executor only for `mock` mode.
+If physical execution is requested in Unitree mode while readiness is blocked,
+startup fails before the SDK client factory or backend initialization is called.
+No force, unsafe, skip-safety, or development bypass is provided.
 
 ## Motion safety requirements
 
@@ -89,7 +92,7 @@ typed program
     -> safety validator
     -> hardware-neutral intent
     -> motion strategy / command backend
-    -> reviewed real command client (future)
+    -> reviewed real command client adapter (optional, gate required)
 ```
 
 The real client must be separately reviewed and must preserve Poppy command
@@ -167,10 +170,10 @@ execution.
 
 ## Explicit non-goals
 
-This contract does not implement or perform:
+This contract does not perform:
 
 - GO2 connection or movement
-- Unitree `SportClient` calls
+- live Unitree `SportClient` calls
 - DDS command publishing
 - physical emergency stop
 - hardware tests

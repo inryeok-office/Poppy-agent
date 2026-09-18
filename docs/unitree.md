@@ -38,7 +38,7 @@ documented read-only source proves a stronger state.
 This environment has no installed Unitree SDK, CycloneDDS runtime, or physical Go2.
 Hardware validation status: **NOT TESTED ON HARDWARE**.
 
-## Future command integration boundary
+## Command integration boundary
 
 Telemetry and command execution remain separate concerns:
 
@@ -53,9 +53,9 @@ MotionExecutionStrategy (MOVE/TURN only, explicit profile)
     ->
 UnitreeCommandBackend
     ->
-FakeUnitreeCommandClient (current phase)
+FakeUnitreeCommandClient (software-only tests)
     ->
-Real Unitree backend (future, disabled)
+UnitreeSdkCommandClient (optional, readiness-gated)
 ```
 
 The current fake backend records hardware-neutral typed intents in memory and can
@@ -74,8 +74,9 @@ Production rates and physical limits have no defaults and remain TBD.
 
 The fake client records the plan and a fake sleeper records the requested duration
 without waiting. No Unitree SDK command object, DDS publisher, or physical robot
-is involved. The real client is not implemented and `ROBOT_MODE=unitree` remains
-execution-disabled.
+is involved in these tests. The optional real adapter exists, but
+`ROBOT_MODE=unitree` remains execution-disabled while Physical Readiness is
+blocked.
 
 Physical execution readiness is tracked separately in
 [`physical-readiness.md`](physical-readiness.md). The readiness evaluator treats
@@ -105,10 +106,10 @@ Poppy's current contract deliberately records the following decisions:
 
 The `UnitreeCommandClient` protocol is injected into `UnitreeCommandBackend`.
 It returns a normalized success boolean so the backend never silently ignores a
-client failure. The official SDK source returns an operation status code; a future
-real client must translate that code according to a separately reviewed policy.
-Only `FakeUnitreeCommandClient` is implemented in this phase. No real client, SDK
-import, SportClient instance, command publisher, semantic conversion, or hardware
-safety limit is defined.
+client failure. The official SDK source returns an operation status code, which
+`UnitreeSdkCommandClient` normalizes without exposing raw SDK values. The adapter
+imports the optional SDK lazily and is constructed only after
+`PhysicalExecutionGate` passes. No command publisher, semantic conversion, or
+hardware safety limit is defined.
 
 Hardware validation status: **NOT TESTED ON HARDWARE**.

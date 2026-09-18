@@ -114,6 +114,12 @@ class MockExecutionExecutor:
         """Expose the target trace for deterministic tests and local inspection."""
         return cast(list[MockCommandEvent], getattr(self.target, "events", []))
 
+    def shutdown(self) -> None:
+        """Release an optional target resource without synthesizing a stop."""
+        shutdown = getattr(self.target, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
+
     def execute(
         self,
         task: ExecutionTask,

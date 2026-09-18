@@ -14,8 +14,8 @@ HardwareCommandIntent
     -> MotionPlan
     -> UnitreeCommandBackend
     -> UnitreeCommandClient
-    -> FakeUnitreeCommandClient (current phase)
-    -> real SDK client (disabled)
+    -> FakeUnitreeCommandClient (software-only tests)
+    -> UnitreeSdkCommandClient (optional, readiness-gated)
 ```
 
 The strategy creates a plan only. It does not open a connection, import the
@@ -88,8 +88,9 @@ No physical safety values are defined here. Maximum distance, speed, angle,
 angular rate, acceleration, braking behavior, battery threshold, obstacle
 distance, emergency-stop latency, and preset allow-list remain **TBD**.
 
-The real Unitree client is not implemented or wired into `ROBOT_MODE=unitree`.
-Hardware validation status: **NOT TESTED ON HARDWARE**.
+The optional real Unitree adapter is not wired into `ROBOT_MODE=unitree` while
+Physical Readiness is blocked. Hardware validation status: **NOT TESTED ON
+HARDWARE**.
 
 ## Official SDK references
 
