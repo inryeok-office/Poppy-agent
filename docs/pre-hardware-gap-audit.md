@@ -4,10 +4,12 @@
 
 이 문서는 Poppy-Agent의 Physical Readiness blocker를 코드, 테스트, 운영 문서
 evidence로 재감사한 결과다. 최초 감사 기준은
-`8ec2ac232f1664acedfe4c3bc5b0dbdb18baf9e8`이며, 이번 검토 기준은
-`acba96d34b010db8b1515cc6d48a3ea81f525a31` (`origin/develop`)이다.
-최초 감사 SHA는 역사적 기준으로 보존하고, 최신 SHA를 현재 상태의 source of truth로
-사용한다.
+`8ec2ac232f1664acedfe4c3bc5b0dbdb18baf9e8`이며, 이전 검토 기준은
+`acba96d34b010db8b1515cc6d48a3ea81f525a31`이다. 이번 검토의 current Agent 기준은
+`c1bdbe5c82fa245916e4519225023fb89279dc63` (`origin/develop`)이고, current
+Poppy-Server `develop` 기준은 `3951e51dfe453dc215d6eeb190997235b3aeaabb`이다.
+역사적 감사 SHA는 보존하고, current develop SHA를 현재 software 상태의 source of
+truth로 사용한다.
 이 감사의 `RESOLVED`는 물리 실행 승인을 뜻하지 않는다. 실제 장비 검증과 책임자 승인이
 끝나기 전까지 Physical Readiness는 `BLOCKED`이며 `NOT READY FOR PHYSICAL EXECUTION`이다.
 
@@ -18,6 +20,47 @@ evidence로 재감사한 결과다. 최초 감사 기준은
 - `UNRESOLVED`: 추가 software 구현 또는 명시적 contract가 필요함.
 - `REQUIRES_HARDWARE`: 실제 장비 evidence 없이는 판단할 수 없음.
 - `REQUIRES_OWNER_APPROVAL`: 장비 소유자·운영 책임자의 결정 또는 승인이 필요함.
+
+## Runtime Evidence and Deployment Baseline
+
+실제 Ubuntu systemd runtime에서 다음 Unitree SDK evidence를 확인했다.
+
+- distribution: `unitree_sdk2py 1.0.1`
+- checkout: `/home/poppy/poppy/unitree_sdk2_python`
+- remote: `https://github.com/unitreerobotics/unitree_sdk2_python.git`
+- base commit: `65691c8a8bc53b98d3976dba4dbf9d5d20b2e7f5`
+- `describe`: `65691c8-dirty`
+- editable install: `YES`
+- runtime linkage: `CONFIRMED_RUNTIME_SDK`
+- dirty file: `unitree_sdk2py/test/lowlevel/read_lowstate.py`
+- dirty diff: telemetry helper NIC 이름 `enp2s0` → `enp3s0`, 총 2줄 변경
+- production runtime library affected: `NO`
+- runtime import path affected: `NO`
+- dirty patch SHA256: `087ffbeb362f8453397484d0205c1bf8719c7322ad94a6e9992a19ae80f4205d`
+- exact evidence classification: `PROVIDED_WITH_DIRTY_NON_RUNTIME_HELPER`
+- CycloneDDS runtime distribution: `0.10.2`
+
+사용자가 제공한 실제 device evidence는 `Unitree GO2 EDU`, Robot Software Version
+`V1.0.24`, Hardware Version `V1.0`, SN verified/redacted이다. `V1.0.24`는 화면의
+`Software Version` label이며 Firmware Version으로 재명명하지 않는다. Firmware exact
+version은 `MISSING`으로 유지한다.
+
+`/etc/poppy-agent/poppy-agent.env`는 존재하며 `root:root`, mode `600`이지만, 이번
+evidence run에서 내용은 확인하지 못했다. 실제 mode, Robot UUID, model/edition,
+firmware, SDK metadata, physical execution flag는 `UNAVAILABLE`이다. example 파일의
+값은 운영 runtime evidence로 사용하지 않는다.
+
+실제 deployed Agent는
+`d6fc2f1acab258c200583f1fc946a44eea29fb42`이며 current Agent `develop`보다 53 commits
+behind, 0 commits ahead다. deployed Agent에는 current develop의
+`PhysicalExecutionGate`, `UnitreeSdkCommandClient`, physical execution preflight,
+hardware validation plan, PRESET fail-closed, current MOVE/TURN mapper boundary 및
+physical execution default-disabled gate가 없다.
+
+따라서 deployed Agent 상태는
+`STALE / NOT REPRESENTATIVE OF CURRENT_DEVELOP / NOT ELIGIBLE FOR CURRENT HARDWARE
+VALIDATION`으로 기록한다. 이 판정은 deployment update를 수행하거나 승인하는 의미가
+아니다.
 
 ## Blocker matrix
 
@@ -33,6 +76,10 @@ evidence로 재감사한 결과다. 최초 감사 기준은
 | `OBSERVABILITY_REQUIREMENTS_UNMET` | `PARTIALLY_RESOLVED` | structured lifecycle/transport/recovery logging, connectivity state, execution ownership, operational snapshot과 atomic status publication이 구현됐다. 관련 observability·operational status 테스트와 #77 preflight가 blocked reason, cancellation, disconnect/reconciliation, disable 상태를 검증한다. | 물리 검증 중 필요한 관찰 항목의 현장 적합성·책임자 검토와 hardware evidence가 남음. | #78 |
 | `EQUIPMENT_OWNER_APPROVAL_MISSING` | `REQUIRES_OWNER_APPROVAL` | `physical-readiness.md`는 limits, stop responsibility, operating policy, validation evidence가 responsible owner/operator 승인을 필요로 한다고 명시한다. 저장소에는 승인 자료가 없다. | 장비 소유자와 supervising operator의 실제 승인 필요. | #78 |
 | `HARDWARE_VALIDATION_NOT_COMPLETED` | `REQUIRES_HARDWARE` | readiness 문서와 Unitree 문서가 hardware validation status를 `NOT TESTED ON HARDWARE`로 명시한다. 현재 adapter/command backend 테스트는 fake SDK·in-memory double만 사용한다. | controlled hardware validation과 evidence 기록 필요. | #78 |
+| `SDK_EXACT_RUNTIME_VERSION` | `RESOLVED` | 실제 runtime distribution `unitree_sdk2py 1.0.1`, base commit `65691c8...`, editable linkage 및 patch fingerprint가 확인됐다. checkout은 non-runtime telemetry helper만 dirty하다. | current deployment는 stale하므로 이 SDK evidence를 current develop physical-readiness baseline으로 해석하지 않는다. | 별도 deployment issue |
+| `CYCLONEDDS_RUNTIME_VERSION` | `RESOLVED` | runtime venv의 별도 CycloneDDS distribution `0.10.2`가 확인됐다. | Unitree SDK version과 혼동하지 않는다. | 없음 |
+| `GO2_DEVICE_IDENTITY` | `PARTIALLY_RESOLVED` | 사용자 제공 device evidence: `Unitree GO2 EDU`, Robot Software Version `V1.0.24`, Hardware Version `V1.0`, SN verified/redacted. | Firmware exact와 authoritative source, complete hardware health가 남아 있다. | #78 |
+| `DEPLOYMENT_CURRENT_SAFETY_BOUNDARY` | `UNRESOLVED` | deployed Agent `d6fc2f1...`는 current Agent `develop`보다 53 commits behind이며 current physical-readiness safety boundary를 포함하지 않는다. | 별도 controlled deployment alignment와 software-only verification 필요. | 별도 deployment issue |
 
 ## Evidence 해석
 
@@ -66,8 +113,10 @@ Operational readiness는 별도 개념이다. Agent operational snapshot의 `REA
   있다.
 
 따라서 #76 완료로 real command client software boundary만 `RESOLVED`로 갱신한다.
-나머지 물리 실행 전제 조건은 해제하지 않는다. 이 PR에서는 #77~#78과 중복되는 새
-Issue를 만들지 않았고, Issue body도 변경하지 않았다.
+나머지 물리 실행 전제 조건은 해제하지 않는다. 이전 audit에서는 #77~#78과 중복되는
+새 Issue를 만들지 않았고, Issue body도 변경하지 않았다. 현재 deployment drift는 이
+문서의 별도 unresolved baseline으로 기록하며, controlled deployment alignment는
+별도 작업으로 다룬다.
 
 ## 안전 경계
 

@@ -22,6 +22,35 @@ NOT TESTED ON HARDWARE
 owner approval, authoritative physical constraints, emergency responsibility,
 hardware telemetry evidence와 hardware validation은 남아 있다.
 
+## Evidence Baseline and Deployment Currency
+
+Validation record는 승인된 current software baseline과 실제 deployed baseline을
+구분해서 기록해야 한다.
+
+- current Poppy-agent `develop`: `c1bdbe5c82fa245916e4519225023fb89279dc63`
+- current Poppy-Server `develop`: `3951e51dfe453dc215d6eeb190997235b3aeaabb`
+- actual deployed Agent: `d6fc2f1acab258c200583f1fc946a44eea29fb42`
+- deployment drift: 53 commits behind, 0 commits ahead
+- deployed status: `STALE / NOT REPRESENTATIVE OF CURRENT_DEVELOP`
+- validation eligibility: `NOT ELIGIBLE FOR CURRENT HARDWARE VALIDATION`
+
+실제 Ubuntu runtime SDK evidence는 `unitree_sdk2py 1.0.1`, base commit
+`65691c8a8bc53b98d3976dba4dbf9d5d20b2e7f5`, editable install `YES`, checkout
+`DIRTY`다. dirty scope는 `unitree_sdk2py/test/lowlevel/read_lowstate.py`의
+`enp2s0` → `enp3s0` telemetry helper 변경 2줄이며, production runtime library와
+runtime import path에는 영향을 주지 않는다. Patch fingerprint는
+`087ffbeb362f8453397484d0205c1bf8719c7322ad94a6e9992a19ae80f4205d`다.
+CycloneDDS runtime은 Unitree SDK version과 별도로 `0.10.2`다.
+
+사용자가 제공한 device evidence는 `Unitree GO2 EDU`, Robot Software Version `V1.0.24`,
+Hardware Version `V1.0`, SN verified/redacted다. `V1.0.24`는 화면 label을 보존한
+Software Version이며 Firmware Version이 아니다. Firmware exact version은 `MISSING`이다.
+
+deployed Agent는 current develop의 physical-readiness safety boundary를 포함하지
+않으므로 current hardware validation evidence의 software baseline으로 사용하지 않는다.
+이 항목은 deployment update를 수행하지 않고 별도 controlled software/deployment
+작업으로 남긴다.
+
 ## Preconditions
 
 다음 조건을 모두 확인하기 전에는 `DO NOT PROCEED`이다.
