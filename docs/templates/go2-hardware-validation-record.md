@@ -32,11 +32,15 @@
 
 ## Version and Equipment Identity
 
-- Current Agent develop SHA:
-- Current Poppy-Server develop SHA:
+- Evidence collection Agent develop SHA:
+- Evidence collection Poppy-Server develop SHA:
+- Current Agent develop SHA at validation time:
+- Current Poppy-Server develop SHA at validation time:
 - Deployed Agent SHA:
-- Deployment drift: commits behind / commits ahead:
-- Deployed baseline classification: `CURRENT` / `STALE / NOT REPRESENTATIVE OF CURRENT_DEVELOP`
+- Deployed Poppy-Server SHA: `UNAVAILABLE` until independently verified
+- Agent deployment drift: commits behind / commits ahead:
+- Poppy-Server deployment drift: `UNAVAILABLE` until independently verified
+- Deployed baseline classification: `CURRENT` / `STALE / NOT REPRESENTATIVE OF CURRENT_DEVELOP` / `NOT VERIFIED`
 - Hardware identity/model:
 - Robot Software Version (device label):
 - Hardware Version:

@@ -34,19 +34,19 @@ test doubles, not physical-readiness evidence.
 
 ## Current Repository and Runtime Evidence
 
-이 문서의 current software 기준은 다음 SHA다.
+이 문서에 기록한 SHA는 2026-09-29 evidence collection snapshot이다. PR 병합이나 후속 커밋으로 develop이 이동하면 이 값은 current develop을 뜻하지 않는다. 실제 hardware validation 직전에는 latest Agent와 Server develop SHA를 다시 조회해 validation record에 기록해야 한다.
 
-- Poppy-agent `develop`: `c1bdbe5c82fa245916e4519225023fb89279dc63`
-- Poppy-Server `develop`: `3951e51dfe453dc215d6eeb190997235b3aeaabb`
+- Poppy-agent `develop` at evidence collection: `c1bdbe5c82fa245916e4519225023fb89279dc63`
+- Poppy-Server `develop` at evidence collection: `3951e51dfe453dc215d6eeb190997235b3aeaabb`
 
 실제 Ubuntu deployment에서 확인된 Agent는 다음과 같다.
 
 - deployed Agent: `d6fc2f1acab258c200583f1fc946a44eea29fb42`
-- drift: current Agent `develop`보다 53 commits behind, 0 commits ahead
+- drift measured against the evidence collection Agent `develop` snapshot: 53 commits behind, 0 commits ahead
 - classification: `STALE / NOT REPRESENTATIVE OF CURRENT_DEVELOP`
 - current hardware validation 사용 적격성: `NOT ELIGIBLE FOR CURRENT HARDWARE VALIDATION`
 
-deployed SHA에는 current develop의 다음 physical-safety boundary가 없다.
+evidence collection 당시 deployed SHA에는 그 시점 Agent develop의 다음 physical-safety boundary가 없었다.
 
 - `PhysicalExecutionGate`
 - `UnitreeSdkCommandClient`
@@ -255,3 +255,4 @@ This contract does not perform:
 - PRESET mapping
 
 Hardware validation status: **NOT TESTED ON HARDWARE**.
+현재 validation baseline은 위 snapshot에서 자동으로 파생되지 않는다. 검증 실행 시점의 current SHA와 실제 deployed SHA를 별도로 확인한다.

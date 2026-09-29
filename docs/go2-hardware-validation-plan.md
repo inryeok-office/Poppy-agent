@@ -22,16 +22,20 @@ NOT TESTED ON HARDWARE
 owner approval, authoritative physical constraints, emergency responsibility,
 hardware telemetry evidence와 hardware validation은 남아 있다.
 
-## Evidence Baseline and Deployment Currency
+## Evidence Snapshot and Deployment Currency
 
-Validation record는 승인된 current software baseline과 실제 deployed baseline을
-구분해서 기록해야 한다.
+Validation record는 evidence collection snapshot, validation 시점의 current
+software baseline, 실제 deployed baseline을 구분해서 기록해야 한다. 아래 SHA와
+drift 수치는 evidence collection 당시의 고정값이며, 후속 검증 직전에 다시 산출한다.
 
-- current Poppy-agent `develop`: `c1bdbe5c82fa245916e4519225023fb89279dc63`
-- current Poppy-Server `develop`: `3951e51dfe453dc215d6eeb190997235b3aeaabb`
+- Poppy-agent `develop` at evidence collection: `c1bdbe5c82fa245916e4519225023fb89279dc63`
+- Poppy-Server `develop` at evidence collection: `3951e51dfe453dc215d6eeb190997235b3aeaabb`
+- current Agent/Server develop at validation time: re-check immediately before validation
 - actual deployed Agent: `d6fc2f1acab258c200583f1fc946a44eea29fb42`
-- deployment drift: 53 commits behind, 0 commits ahead
-- deployed status: `STALE / NOT REPRESENTATIVE OF CURRENT_DEVELOP`
+- Agent deployment drift measured at evidence collection: 53 commits behind, 0 commits ahead
+- deployed Poppy-Server SHA: `UNAVAILABLE` in this evidence run
+- Poppy-Server deployment drift/classification: `UNAVAILABLE / NOT VERIFIED`
+- deployed status at evidence collection: `STALE / NOT REPRESENTATIVE OF CURRENT_DEVELOP`
 - validation eligibility: `NOT ELIGIBLE FOR CURRENT HARDWARE VALIDATION`
 
 실제 Ubuntu runtime SDK evidence는 `unitree_sdk2py 1.0.1`, base commit

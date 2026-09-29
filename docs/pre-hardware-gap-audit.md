@@ -5,11 +5,12 @@
 이 문서는 Poppy-Agent의 Physical Readiness blocker를 코드, 테스트, 운영 문서
 evidence로 재감사한 결과다. 최초 감사 기준은
 `8ec2ac232f1664acedfe4c3bc5b0dbdb18baf9e8`이며, 이전 검토 기준은
-`acba96d34b010db8b1515cc6d48a3ea81f525a31`이다. 이번 검토의 current Agent 기준은
-`c1bdbe5c82fa245916e4519225023fb89279dc63` (`origin/develop`)이고, current
-Poppy-Server `develop` 기준은 `3951e51dfe453dc215d6eeb190997235b3aeaabb`이다.
-역사적 감사 SHA는 보존하고, current develop SHA를 현재 software 상태의 source of
-truth로 사용한다.
+`acba96d34b010db8b1515cc6d48a3ea81f525a31`이다. 이번 evidence collection
+snapshot의 Agent 기준은 `c1bdbe5c82fa245916e4519225023fb89279dc63`
+(`origin/develop`)이고, Poppy-Server 기준은
+`3951e51dfe453dc215d6eeb190997235b3aeaabb`이다.
+이 SHA들은 audit 당시의 고정 snapshot이다. 후속 커밋으로 develop이 이동하면
+current software 상태를 뜻하지 않으므로 validation 직전에 latest SHA를 다시 확인한다.
 이 감사의 `RESOLVED`는 물리 실행 승인을 뜻하지 않는다. 실제 장비 검증과 책임자 승인이
 끝나기 전까지 Physical Readiness는 `BLOCKED`이며 `NOT READY FOR PHYSICAL EXECUTION`이다.
 
@@ -50,9 +51,9 @@ evidence run에서 내용은 확인하지 못했다. 실제 mode, Robot UUID, mo
 firmware, SDK metadata, physical execution flag는 `UNAVAILABLE`이다. example 파일의
 값은 운영 runtime evidence로 사용하지 않는다.
 
-실제 deployed Agent는
-`d6fc2f1acab258c200583f1fc946a44eea29fb42`이며 current Agent `develop`보다 53 commits
-behind, 0 commits ahead다. deployed Agent에는 current develop의
+실제 deployed Agent는 evidence collection 당시 Agent develop snapshot보다
+`d6fc2f1acab258c200583f1fc946a44eea29fb42`이며 53 commits behind, 0 commits
+ahead였다. deployed Agent에는 evidence collection 당시 develop의
 `PhysicalExecutionGate`, `UnitreeSdkCommandClient`, physical execution preflight,
 hardware validation plan, PRESET fail-closed, current MOVE/TURN mapper boundary 및
 physical execution default-disabled gate가 없다.
@@ -79,7 +80,7 @@ VALIDATION`으로 기록한다. 이 판정은 deployment update를 수행하거�
 | `SDK_EXACT_RUNTIME_VERSION` | `RESOLVED` | 실제 runtime distribution `unitree_sdk2py 1.0.1`, base commit `65691c8...`, editable linkage 및 patch fingerprint가 확인됐다. checkout은 non-runtime telemetry helper만 dirty하다. | current deployment는 stale하므로 이 SDK evidence를 current develop physical-readiness baseline으로 해석하지 않는다. | 별도 deployment issue |
 | `CYCLONEDDS_RUNTIME_VERSION` | `RESOLVED` | runtime venv의 별도 CycloneDDS distribution `0.10.2`가 확인됐다. | Unitree SDK version과 혼동하지 않는다. | 없음 |
 | `GO2_DEVICE_IDENTITY` | `PARTIALLY_RESOLVED` | 사용자 제공 device evidence: `Unitree GO2 EDU`, Robot Software Version `V1.0.24`, Hardware Version `V1.0`, SN verified/redacted. | Firmware exact와 authoritative source, complete hardware health가 남아 있다. | #78 |
-| `DEPLOYMENT_CURRENT_SAFETY_BOUNDARY` | `UNRESOLVED` | deployed Agent `d6fc2f1...`는 current Agent `develop`보다 53 commits behind이며 current physical-readiness safety boundary를 포함하지 않는다. | 별도 controlled deployment alignment와 software-only verification 필요. | 별도 deployment issue |
+| `DEPLOYMENT_CURRENT_SAFETY_BOUNDARY` | `UNRESOLVED` | deployed Agent `d6fc2f1...`는 evidence collection 당시 Agent develop snapshot보다 53 commits behind였으며 그 snapshot의 physical-readiness safety boundary를 포함하지 않았다. | 별도 controlled deployment alignment와 software-only verification 필요. | 별도 deployment issue |
 
 ## Evidence 해석
 
