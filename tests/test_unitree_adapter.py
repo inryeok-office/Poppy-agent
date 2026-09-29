@@ -25,10 +25,20 @@ def unitree_config() -> UnitreeGo2Config:
     )
 
 
-def test_sdk_unavailable_error_is_explicit() -> None:
+def test_sdk_unavailable_error_is_explicit(monkeypatch) -> None:
+    import_calls: list[str] = []
+
+    def unavailable_import(name: str):
+        import_calls.append(name)
+        raise ImportError("simulated missing Unitree SDK")
+
+    monkeypatch.setattr("poppy_agent.robot.unitree.import_module", unavailable_import)
+
     adapter = UnitreeGo2Adapter(unitree_config())
     with pytest.raises(UnitreeSdkUnavailableError, match="official unitree_sdk2_python"):
         adapter.initialize()
+
+    assert import_calls == ["unitree_sdk2py.core.channel"]
 
 
 def test_adapter_uses_official_read_only_subscription_shape(monkeypatch) -> None:
