@@ -35,7 +35,30 @@ percentage. Poppy-Agent therefore reports `battery_percent=None` rather than app
 an unverified conversion. It also reports operation status as `UNAVAILABLE` until a
 documented read-only source proves a stronger state.
 
-This environment has no installed Unitree SDK, CycloneDDS runtime, or physical Go2.
+## Runtime evidence
+
+실제 Ubuntu systemd runtime에서 확인한 Unitree SDK는 다음과 같다.
+
+- distribution: `unitree_sdk2py 1.0.1`
+- checkout: `/home/poppy/poppy/unitree_sdk2_python`
+- base commit: `65691c8a8bc53b98d3976dba4dbf9d5d20b2e7f5`
+- checkout state: `DIRTY`
+- dirty file: `unitree_sdk2py/test/lowlevel/read_lowstate.py`
+- dirty scope: telemetry helper NIC 이름 `enp2s0` → `enp3s0`, 총 2줄 변경
+- production runtime library affected: `NO`
+- runtime import path affected: `NO`
+- patch SHA256: `087ffbeb362f8453397484d0205c1bf8719c7322ad94a6e9992a19ae80f4205d`
+- classification: `PROVIDED_WITH_DIRTY_NON_RUNTIME_HELPER`
+
+CycloneDDS는 Unitree SDK version과 별도의 runtime distribution이며 version은
+`0.10.2`다. 이 evidence는 package/runtime metadata를 증명하지만 clean upstream
+checkout을 의미하지 않는다.
+
+사용자가 제공한 device evidence는 `Unitree GO2 EDU`, Robot Software Version `V1.0.24`,
+Hardware Version `V1.0`, SN verified/redacted다. `V1.0.24`는 device 화면의
+`Software Version` label이므로 Firmware Version으로 재명명하지 않는다. Firmware
+exact version은 `MISSING`이다.
+
 Hardware validation status: **NOT TESTED ON HARDWARE**.
 
 ## Command integration boundary

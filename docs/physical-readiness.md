@@ -32,6 +32,73 @@ gate is explicitly satisfied. The adapter is not initialized in the current
 blocked configuration. The Fake Unitree client and test motion profiles are
 test doubles, not physical-readiness evidence.
 
+## Current Repository and Runtime Evidence
+
+이 문서에 기록한 SHA는 2026-09-29 evidence collection snapshot이다. PR 병합이나 후속 커밋으로 develop이 이동하면 이 값은 current develop을 뜻하지 않는다. 실제 hardware validation 직전에는 latest Agent와 Server develop SHA를 다시 조회해 validation record에 기록해야 한다.
+
+- Poppy-agent `develop` at evidence collection: `c1bdbe5c82fa245916e4519225023fb89279dc63`
+- Poppy-Server `develop` at evidence collection: `3951e51dfe453dc215d6eeb190997235b3aeaabb`
+
+실제 Ubuntu deployment에서 확인된 Agent는 다음과 같다.
+
+- deployed Agent: `d6fc2f1acab258c200583f1fc946a44eea29fb42`
+- drift measured against the evidence collection Agent `develop` snapshot: 53 commits behind, 0 commits ahead
+- classification: `STALE / NOT REPRESENTATIVE OF CURRENT_DEVELOP`
+- current hardware validation 사용 적격성: `NOT ELIGIBLE FOR CURRENT HARDWARE VALIDATION`
+
+evidence collection 당시 deployed SHA에는 그 시점 Agent develop의 다음 physical-safety boundary가 없었다.
+
+- `PhysicalExecutionGate`
+- `UnitreeSdkCommandClient`
+- physical execution software-only preflight
+- controlled GO2 hardware validation plan
+- PRESET fail-closed boundary
+- current MOVE/TURN mapper boundary
+- physical execution default-disabled gate
+
+이 deployment drift는 이번 문서 갱신에서 기록만 하며, deployment update나 service
+변경을 수행하지 않는다.
+
+### Runtime SDK Evidence
+
+실제 systemd runtime Python에서 확인한 SDK evidence는 다음과 같다.
+
+- distribution: `unitree_sdk2py 1.0.1`
+- checkout: `/home/poppy/poppy/unitree_sdk2_python`
+- remote: `https://github.com/unitreerobotics/unitree_sdk2_python.git`
+- base commit: `65691c8a8bc53b98d3976dba4dbf9d5d20b2e7f5`
+- checkout describe: `65691c8-dirty`
+- editable install: `YES`
+- runtime linkage: `CONFIRMED_RUNTIME_SDK`
+- checkout state: `DIRTY`
+- dirty file: `unitree_sdk2py/test/lowlevel/read_lowstate.py`
+- dirty change: telemetry helper의 NIC 이름 `enp2s0` → `enp3s0`
+- dirty scope: 총 2줄 변경, SDK production runtime library 변경 없음
+- runtime import path 영향: `NO`
+- dirty patch SHA256: `087ffbeb362f8453397484d0205c1bf8719c7322ad94a6e9992a19ae80f4205d`
+- exact runtime evidence: `PROVIDED_WITH_DIRTY_NON_RUNTIME_HELPER`
+
+CycloneDDS는 Unitree SDK version과 별도의 runtime distribution이며, 확인된 version은
+`0.10.2`다.
+
+### Device and Configuration Evidence
+
+사용자가 제공한 실제 device evidence는 다음과 같이 기록한다.
+
+- model/edition: `Unitree GO2 EDU`
+- Robot Software Version: `V1.0.24`
+- Hardware Version: `V1.0`
+- SN: device에서 확인됨; 전체값은 기록하지 않음 (`PROVIDED / REDACTED`)
+- Firmware exact version: `MISSING`
+
+`V1.0.24`는 device 화면의 `Software Version` label을 보존한 값이다. 이를
+`Firmware Version`으로 재명명하지 않는다.
+
+`/etc/poppy-agent/poppy-agent.env`는 존재하며 `root:root`, mode `600`이지만, 이번
+evidence run에서는 내용에 접근할 수 없었다. 따라서 실제 `ROBOT_MODE`, Robot UUID,
+model/edition, firmware, SDK metadata, `POPPY_ENABLE_PHYSICAL_EXECUTION` 값은
+`UNAVAILABLE`로 유지하며 repository의 example 값을 runtime 값으로 사용하지 않는다.
+
 ## Readiness architecture
 
 ```text
@@ -188,3 +255,4 @@ This contract does not perform:
 - PRESET mapping
 
 Hardware validation status: **NOT TESTED ON HARDWARE**.
+현재 validation baseline은 위 snapshot에서 자동으로 파생되지 않는다. 검증 실행 시점의 current SHA와 실제 deployed SHA를 별도로 확인한다.

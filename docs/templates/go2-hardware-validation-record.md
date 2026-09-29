@@ -32,12 +32,40 @@
 
 ## Version and Equipment Identity
 
-- Agent commit SHA:
-- Server commit SHA:
+- Evidence collection Agent develop SHA:
+- Evidence collection Poppy-Server develop SHA:
+- Current Agent develop SHA at validation time:
+- Current Poppy-Server develop SHA at validation time:
+- Deployed Agent SHA:
+- Deployed Poppy-Server SHA: `UNAVAILABLE` until independently verified
+- Agent deployment drift: commits behind / commits ahead:
+- Poppy-Server deployment drift: `UNAVAILABLE` until independently verified
+- Deployed baseline classification: `CURRENT` / `STALE / NOT REPRESENTATIVE OF CURRENT_DEVELOP` / `NOT VERIFIED`
 - Hardware identity/model:
-- Firmware version:
-- SDK version:
+- Robot Software Version (device label):
+- Hardware Version:
+- Firmware exact version: `MISSING` until independently authoritative
+- SN evidence: `verified / withheld / unavailable`; never record the full value
+- SDK runtime distribution:
+- SDK base source commit:
+- SDK checkout state: `CLEAN` / `DIRTY`
+- SDK dirty scope:
+- SDK dirty patch SHA256:
+- CycloneDDS runtime distribution:
 - Hardware/network environment reference (no secret):
+
+## Runtime Configuration Evidence
+
+- EnvironmentFile path:
+- EnvironmentFile ownership/mode:
+- Whitelisted runtime metadata read: `YES` / `NO`
+- `ROBOT_MODE`: `PROVIDED` / `UNAVAILABLE`
+- Robot model/edition env: `PROVIDED` / `UNAVAILABLE`
+- Robot UUID: `present/valid` status only; never record raw value
+- Firmware env: `PROVIDED` / `MISSING` / `UNAVAILABLE`
+- SDK env: `PROVIDED` / `UNAVAILABLE`
+- `POPPY_ENABLE_PHYSICAL_EXECUTION`: `true` / `false` / `absent` / `UNAVAILABLE`
+- Secret values recorded: `NO`
 
 ## Validation Scope
 
