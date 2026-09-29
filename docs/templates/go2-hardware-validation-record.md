@@ -30,6 +30,26 @@
 - [ ] rollback/disable path verified:
 - [ ] evidence storage and incident reference prepared:
 
+## Human Approval Evidence Snapshot
+
+이 표는 role-only evidence를 기록하기 위한 필드다. 담당자 실명, 전체 SN, Robot
+UUID, token, password 또는 credential을 기록하지 않는다.
+
+| Requirement | Status | Evidence/reference | Remaining gap |
+| --- | --- | --- | --- |
+| Equipment/institution approval | `PROVIDED` / `PARTIAL` / `MISSING` | role-only reference | |
+| Responsible teacher | `PROVIDED` / `MISSING` | role-only reference | |
+| Supervising adult/operator | `PROVIDED` / `MISSING` | role-only reference | |
+| Approved validation environment | `PROVIDED` / `PARTIAL` / `MISSING` | room/reference | |
+| General development validation authorization | `PROVIDED` / `PARTIAL` / `MISSING` | scope reference | |
+| Bounded physical movement scope | `PROVIDED` / `PARTIAL` / `MISSING` | approved scope reference | |
+| Approved physical limits | `PROVIDED` / `PARTIAL` / `MISSING` | authoritative source/reference | |
+| Production motion profile | `PROVIDED` / `PARTIAL` / `MISSING` | authoritative source/reference | |
+| Physical emergency procedure | `PROVIDED` / `PARTIAL` / `MISSING` | official/operator reference | |
+| Firmware exact | `PROVIDED` / `PARTIAL` / `MISSING` | authoritative source/reference | |
+| Controlled deployment approval | `PROVIDED` / `MISSING` | role-only approval reference | |
+| Deployment execution | `NOT_STARTED` / `IN_PROGRESS` / `COMPLETED` | separate deployment issue | |
+
 ## Version and Equipment Identity
 
 - Evidence collection Agent develop SHA:

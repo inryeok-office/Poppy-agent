@@ -99,6 +99,35 @@ evidence run에서는 내용에 접근할 수 없었다. 따라서 실제 `ROBOT
 model/edition, firmware, SDK metadata, `POPPY_ENABLE_PHYSICAL_EXECUTION` 값은
 `UNAVAILABLE`로 유지하며 repository의 example 값을 runtime 값으로 사용하지 않는다.
 
+## Human Approval Evidence Snapshot
+
+2026-09-29 현장 담당자 답변을 기준으로 다음 human approval evidence를 기록한다.
+담당 교사와 supervising adult의 실명, 전체 SN, Robot UUID, credential은 기록하지
+않고 역할과 상태만 보존한다.
+
+| Requirement | Status | Evidence | Remaining gap |
+| --- | --- | --- | --- |
+| Equipment/institution approval | `PROVIDED` | GO2 EDU를 Poppy 개발 및 실기기 검증에 사용하는 것이 승인됨 | 승인 reference의 공개 기록은 역할 수준으로만 유지 |
+| Responsible teacher | `PROVIDED` | 담당 교사 확인 | 실명은 비공개 |
+| Supervising adult/operator | `PROVIDED` | 현장 supervising adult 확인 | 실명은 비공개 |
+| Approved validation environment | `PROVIDED` | AI자율주행실습실 | 구체적인 physical test scope는 별도 확정 필요 |
+| General development validation authorization | `PROVIDED` | 개발 과정의 전반적인 검증 사용 허용 | bounded physical movement scope는 별도 정의 필요 |
+| Bounded physical movement scope | `PARTIAL` | 전반적인 검증 사용은 허용됨 | 구체적인 허용 MOVE/TURN 범위 미정 |
+| Approved physical limits | `MISSING` | 기관이 별도 수치 제한을 제공하지 않음 | 개발팀 판단은 승인된 authoritative limit로 취급하지 않음 |
+| Production motion profile | `MISSING` | 승인된 production profile 없음 | 속도·거리·각도·가감속 및 완료 기준 필요 |
+| Physical emergency procedure | `PARTIAL` | 사람 안전 우선, 이상 시 중단, 안전 확보 우선, 필요 시 전원 차단 고려 | operator responsibility, restart criteria, recovery procedure 미정 |
+| Firmware exact | `MISSING` | device Software Version `V1.0.24`만 확인 | authoritative firmware source 필요 |
+| Controlled deployment approval | `PROVIDED` | 최신 software baseline 정렬 승인 확인 | deployment execution은 #89에서 별도 수행하며 아직 시작하지 않음 |
+
+현재 Agent develop은 `7e8f9ac068e255c458c2c2ff3cc9f70b0c660f09`, Poppy-Server
+develop은 `3951e51dfe453dc215d6eeb190997235b3aeaabb`다. 실제 deployed Agent는
+`d6fc2f1acab258c200583f1fc946a44eea29fb42`로 56 commits behind이며, 현재
+physical-readiness software baseline을 대표하지 않는다.
+
+일반적인 장비 사용 승인과 감독자 확인은 제공됐지만, 위의 authoritative physical
+constraints와 formal emergency procedure가 없으므로 Physical Readiness는 계속
+`BLOCKED`다.
+
 ## Readiness architecture
 
 ```text
