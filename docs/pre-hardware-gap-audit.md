@@ -63,6 +63,29 @@ physical execution default-disabled gate가 없다.
 VALIDATION`으로 기록한다. 이 판정은 deployment update를 수행하거나 승인하는 의미가
 아니다.
 
+## 2026-09-29 Human Approval Delta
+
+현장 담당자 답변으로 일반적인 human approval evidence가 추가됐다. 담당 교사와
+supervising adult의 실명, 전체 SN, Robot UUID, credential은 기록하지 않는다.
+
+| Requirement | Status | Evidence | Remaining gap |
+| --- | --- | --- | --- |
+| Equipment/institution approval | `PROVIDED` | GO2 EDU를 Poppy 개발 및 실기기 검증에 사용하는 것이 승인됨 | 구체적인 physical scope 승인 reference는 역할 수준으로만 기록 |
+| Responsible teacher | `PROVIDED` | 담당 교사 확인 | 실명 비공개 |
+| Supervising adult/operator | `PROVIDED` | 현장 감독자 확인 | 실명 비공개 |
+| Approved environment | `PROVIDED` | AI자율주행실습실 | bounded movement scope 미정 |
+| General development validation authorization | `PROVIDED` | 개발 과정 전반의 검증 사용 허용 | specific command scope 미정 |
+| Bounded physical movement scope | `PARTIAL` | 전반적인 사용 허용만 확인 | 구체적인 MOVE/TURN 범위 필요 |
+| Approved physical limits | `MISSING` | 기관의 별도 수치 제한 없음 | 개발팀 판단은 승인 limit가 아님 |
+| Production motion profile | `MISSING` | 승인된 profile 없음 | authoritative profile 필요 |
+| Physical emergency procedure | `PARTIAL` | 안전 우선, 이상 시 중단, 필요 시 전원 차단 고려 | 책임·재시작·복구 절차 미정 |
+| Firmware exact | `MISSING` | Software Version `V1.0.24`만 확인 | authoritative firmware source 필요 |
+| Controlled deployment approval | `PROVIDED` | 최신 software baseline 정렬 승인 확인 | 실제 실행은 #89에서 별도 수행 |
+
+이 delta는 일반 승인과 감독자 존재를 `PROVIDED`로 갱신하지만, physical limits,
+production motion profile, 완전한 emergency procedure와 hardware validation을
+해소하지 않는다. Physical Readiness는 계속 `BLOCKED`다.
+
 ## Blocker matrix
 
 | Blocker | Status | Current evidence | Remaining gap | Next issue |

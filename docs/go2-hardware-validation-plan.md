@@ -87,6 +87,30 @@ deployed Agent는 current develop의 physical-readiness safety boundary를 포�
 실제 owner/operator/teacher 승인 reference가 없으면
 `EQUIPMENT_OWNER_APPROVAL_MISSING`을 해제하지 않는다.
 
+## Human Approval Evidence Snapshot
+
+2026-09-29 현장 담당자 답변 기준의 현재 분류다. 공개 repository에는 담당자 실명을
+기록하지 않고 역할 확인만 기록한다.
+
+| Requirement | Status | Evidence | Remaining gap |
+| --- | --- | --- | --- |
+| Equipment/institution approval | `PROVIDED` | GO2 EDU를 Poppy 개발 및 실기기 검증에 사용하는 것이 승인됨 | 공개 기록에는 승인 역할만 남김 |
+| Responsible teacher | `PROVIDED` | 담당 교사 확인 | 실명 비공개 |
+| Supervising adult/operator | `PROVIDED` | 현장 감독자 확인 | 실명 비공개 |
+| Approved validation environment | `PROVIDED` | AI자율주행실습실 | bounded physical scope 별도 확정 필요 |
+| General development validation authorization | `PROVIDED` | 개발 과정의 전반적인 검증 사용 허용 | 구체적인 movement 범위는 미정 |
+| Bounded physical movement scope | `PARTIAL` | 일반적인 개발 검증 허용 | 허용된 MOVE/TURN 범위와 제외 범위 미정 |
+| Approved physical limits | `MISSING` | 기관이 별도 수치 제한을 제공하지 않음 | 개발팀 판단은 승인 evidence가 아님 |
+| Production motion profile | `MISSING` | 승인된 production motion profile 없음 | authoritative profile과 완료 기준 필요 |
+| Physical emergency procedure | `PARTIAL` | 사람 안전 우선, 이상 시 활동 중단, 안전 확보 우선, 필요 시 전원 차단 고려 | complete responsibility, restart criteria, recovery procedure 미정 |
+| Firmware exact | `MISSING` | Robot Software Version `V1.0.24`만 확인 | Firmware exact와 authoritative source 필요 |
+| Controlled deployment approval | `PROVIDED` | 최신 software baseline 업데이트 승인 확인 | deployment execution은 아직 시작하지 않음 |
+
+이 evidence는 일반적인 사용 승인과 감독자 확인을 제공하지만, production motion
+profile·physical limits·완전한 emergency procedure를 승인된 것으로 확대하지 않는다.
+따라서 현재 판정은 `BLOCKED / NOT READY FOR PHYSICAL EXECUTION / NOT TESTED ON
+HARDWARE`다.
+
 ## Equipment Owner Approval
 
 Equipment owner는 최소한 다음을 authoritative reference와 함께 검토해야 한다.
@@ -116,7 +140,11 @@ Equipment owner는 최소한 다음을 authoritative reference와 함께 검토�
 | Motion profile | authoritative product/equipment source + owner approval | `TBD / REQUIRED BEFORE VALIDATION` | validation record |
 | Physical limits | authoritative product/equipment source + owner approval | `TBD / REQUIRED BEFORE VALIDATION` | validation record |
 | PRESET policy | owner/operator-approved allow-list or explicit prohibition | `TBD / REQUIRED BEFORE VALIDATION` | validation record |
-| Emergency responsibility | equipment owner, supervising operator, official guidance | `TBD / REQUIRED BEFORE VALIDATION` | approval reference |
+| Emergency responsibility | equipment owner, supervising operator, official guidance | `PARTIAL / REQUIRED BEFORE VALIDATION` | approval reference |
+| Equipment/institution approval | responsible institution/equipment owner | `PROVIDED` | role-only human evidence |
+| Supervising adult/teacher | responsible adult and teacher confirmation | `PROVIDED` | role-only human evidence |
+| Validation environment | approved room and participation scope | `PROVIDED / SCOPE PARTIAL` | AI자율주행실습실; validation record |
+| Firmware exact | authoritative device/admin source | `MISSING` | validation record |
 | Telemetry expectations | current Agent boundary + supervised hardware evidence | software boundary exists; hardware evidence missing | validation record |
 | Observability expectations | Agent/Server software evidence + supervised validation evidence | software preflight exists; field evidence missing | preflight and validation record |
 | Hardware validation result | controlled validation record | `NOT COMPLETED` | validation record |
@@ -301,7 +329,8 @@ validation record에 연결된 incident reference로 기록한다. 원인과 evi
 이 plan과 template의 존재, Issue #78의 close, PR merge, software-only preflight
 PASS는 hardware approval이나 Physical Readiness `READY`를 의미하지 않는다.
 
-다음 조건이 모두 실제 evidence로 확보되기 전까지는:
+일반적인 장비 사용 승인과 supervising adult 확인은 확보됐지만, 다음 조건이 모두
+실제 evidence로 확보되기 전까지는:
 
 ```text
 DO NOT PROCEED
@@ -309,7 +338,7 @@ BLOCKED
 NOT READY FOR PHYSICAL EXECUTION
 ```
 
-- owner/operator/teacher 승인
+- bounded movement scope와 owner/operator/teacher의 해당 범위 승인
 - authoritative physical constraints
 - emergency responsibility
 - approved validation environment

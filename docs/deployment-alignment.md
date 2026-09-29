@@ -147,6 +147,92 @@ Hardware validation: NOT TESTED ON HARDWARE
 
 The controlled deployment task must re-query latest Agent/Server develop, confirm the real EnvironmentFile through an authorized secret-safe audit, obtain human approval, and exclude Robot movement and physical commands.
 
+## Authorized Deployment Handoff
+
+이 handoff는 2026-09-29 human approval evidence를 반영한 controlled deployment
+준비 기록이다. 실제 production deployment, service 변경, EnvironmentFile 변경,
+Robot network 접근과 physical command는 이 문서 작업에서 수행하지 않았다.
+
+### Current Baseline
+
+| Item | Value |
+| --- | --- |
+| Current deployed Agent SHA | `d6fc2f1acab258c200583f1fc946a44eea29fb42` |
+| Target latest Agent develop SHA | `7e8f9ac068e255c458c2c2ff3cc9f70b0c660f09` |
+| Current drift | `56` commits behind, `0` commits ahead |
+| Target Poppy-Server develop SHA | `3951e51dfe453dc215d6eeb190997235b3aeaabb` |
+| Preparation reference | PR #88, this document |
+| Deployment approval | `PROVIDED` |
+| Deployment execution | `NOT_STARTED` |
+| Handoff classification | `READY_FOR_AUTHORIZED_DEPLOYMENT` |
+
+Target SHA와 drift는 실제 실행 직전에 다시 조회해야 한다. 이 handoff의 approval
+상태는 deployment execution 또는 physical readiness를 의미하지 않는다.
+
+### Expected Safety Boundary After Deployment
+
+Target baseline에서 다음 경계를 확인해야 한다.
+
+- `PhysicalExecutionGate`
+- physical execution default-disabled (`POPPY_ENABLE_PHYSICAL_EXECUTION=false` 또는 absent default)
+- lazy `UnitreeSdkCommandClient`
+- software-only physical execution preflight
+- PRESET fail-closed
+- explicit MOVE/TURN mapper boundary
+- software STOP과 physical emergency stop의 구분
+
+실제 장비 동작으로 이 경계를 검증하지 않는다. deployment 후에도 physical
+readiness evidence는 별도 승인과 hardware record가 필요하다.
+
+### Human Approval Handoff
+
+| Requirement | Status | Recorded evidence | Remaining gap |
+| --- | --- | --- | --- |
+| Equipment/institution approval | `PROVIDED` | GO2 EDU의 Poppy 개발 및 실기기 검증 사용 승인 | public record에는 role-only 상태만 기록 |
+| Responsible teacher | `PROVIDED` | 담당 교사 확인 | 실명 비공개 |
+| Supervising adult/operator | `PROVIDED` | 현장 감독자 확인 | 실명 비공개 |
+| Approved environment | `PROVIDED` | AI자율주행실습실 | deployment 장소와 validation scope는 구분 |
+| Controlled deployment approval | `PROVIDED` | 최신 software baseline 정렬 승인 | actual deployment는 #89에서 수행 |
+| Bounded movement scope | `PARTIAL` | 일반적인 개발 검증 사용 허용 | 구체적인 physical scope 미정 |
+| Approved physical limits | `MISSING` | 기관의 별도 수치 제한 없음 | authoritative limits 필요 |
+| Production motion profile | `MISSING` | 승인된 profile 없음 | deployment handoff만으로 해소되지 않음 |
+| Emergency procedure | `PARTIAL` | 안전 우선, 이상 시 중단, 필요 시 전원 차단 고려 | 책임·재시작·복구 절차 미정 |
+| Firmware exact | `MISSING` | Software Version `V1.0.24`만 확인 | authoritative firmware source 필요 |
+
+### Required Configuration Checks
+
+수행 주체는 #89에서 secret-safe 방식으로 다음을 확인해야 한다. 값 자체는 Issue,
+PR, 로그에 기록하지 않는다.
+
+- `/etc/poppy-agent/poppy-agent.env` owner/mode와 허용 key 존재 여부
+- `ROBOT_MODE`, `POPPY_ROBOT_ID`, model/edition, network interface 존재 여부
+- `POPPY_ENABLE_PHYSICAL_EXECUTION`이 absent/default false인지 확인
+- `POPPY_SERVER_URL`과 token key는 값 노출 없이 contract만 확인
+- optional polling/reconnect/status-path key와 systemd `RuntimeDirectory` 정합성
+- Python 3.11, recorded `unitree_sdk2py 1.0.1`, CycloneDDS `0.10.2` compatibility
+
+### Required Post-deployment Software-only Checks
+
+- target SHA와 실제 service executable 확인
+- config parser와 registration/auth contract check
+- mock Agent/Server lifecycle 및 execution polling/recovery check
+- `PhysicalExecutionGate` fail-closed check
+- SDK unavailable/preflight isolation check
+- harness, Ruff, format check, mypy, pytest
+- status path permission과 disable/rollback boundary 확인
+
+Robot network, DDS discovery, Unitree SDK initialization, SportClient,
+publisher/subscriber, physical command와 movement는 post-deployment verification에도
+포함하지 않는다.
+
+### Rollback Reference and Unresolved Items
+
+- rollback SHA: `d6fc2f1acab258c200583f1fc946a44eea29fb42`
+- protected EnvironmentFile/config backup reference 필요; secret 값은 저장소에 기록하지 않음
+- rollback 조건: parse/auth/startup/status-path/safety-boundary/software verification failure
+- unresolved: actual deployed Poppy-Server SHA, root-only EnvironmentFile values, exact firmware,
+  physical limits, production motion profile, complete emergency procedure, hardware validation
+
 ## Safety
 
 - Robot network accessed: `NO`
