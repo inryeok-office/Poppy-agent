@@ -30,10 +30,17 @@ or infer an interface automatically.
 `UnitreeGo2Adapter` subscribes to `rt/lowstate` only. It does not create publishers,
 instantiate `SportClient` or `MotionSwitcherClient`, or call any command API.
 
-The official `LowState_` exposes voltage/current (`power_v`/`power_a`), not a battery
-percentage. Poppy-Agent therefore reports `battery_percent=None` rather than applying
-an unverified conversion. It also reports operation status as `UNAVAILABLE` until a
-documented read-only source proves a stronger state.
+The official `LowState_` exposes voltage/current (`power_v`/`power_a`) and the BMS
+state-of-charge field (`bms_state.soc`). The adapter retains `soc` only when it is an
+integer from 0 through 100; it does not infer a percentage from voltage/current. It
+also retains a UTC receipt timestamp. The installed IDL has no documented low-state
+field that safely maps to Poppy operational status, so mode remains unknown and the
+adapter reports operational status as `UNAVAILABLE` until a documented read-only
+source proves a stronger state.
+
+`POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS` is required in Unitree mode. A missing
+or stale low-state snapshot reports `OFFLINE`; a fresh snapshot reports `ONLINE`.
+This freshness policy does not enable physical execution or establish Robot readiness.
 
 ## Runtime evidence
 

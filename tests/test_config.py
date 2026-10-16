@@ -59,8 +59,27 @@ def test_unitree_config_requires_explicit_network_and_identity_metadata() -> Non
             "POPPY_ROBOT_EDITION": "EDU",
             "POPPY_ROBOT_FIRMWARE_VERSION": "provided-by-operator",
             "UNITREE_SDK_VERSION": "unitree_sdk2_python",
+            "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS": "15",
         }
     )
 
     assert config.network_interface == "enp2s0"
     assert config.robot_model == "GO2"
+    assert config.unitree_telemetry_stale_timeout_seconds == 15.0
+
+
+@pytest.mark.parametrize("value", ["", "0", "-1", "NaN", "Infinity", "invalid"])
+def test_unitree_config_requires_positive_finite_telemetry_stale_timeout(value: str) -> None:
+    environment = {
+        "ROBOT_MODE": "unitree",
+        "POPPY_ROBOT_ID": "robot-id",
+        "UNITREE_NETWORK_INTERFACE": "enp2s0",
+        "POPPY_ROBOT_MODEL": "GO2",
+        "POPPY_ROBOT_EDITION": "EDU",
+        "POPPY_ROBOT_FIRMWARE_VERSION": "provided-by-operator",
+        "UNITREE_SDK_VERSION": "unitree_sdk2_python",
+        "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS": value,
+    }
+
+    with pytest.raises(ConfigurationError, match="POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS"):
+        AgentConfig.from_environment(environment)

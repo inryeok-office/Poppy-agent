@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from math import isfinite
 
 
 class ConfigurationError(ValueError):
@@ -23,6 +24,7 @@ class AgentConfig:
     robot_edition: str | None = None
     robot_firmware_version: str | None = None
     unitree_sdk_version: str | None = None
+    unitree_telemetry_stale_timeout_seconds: float | None = None
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> AgentConfig:
@@ -49,11 +51,21 @@ class AgentConfig:
             "POPPY_ROBOT_EDITION": values.get("POPPY_ROBOT_EDITION", "").strip(),
             "POPPY_ROBOT_FIRMWARE_VERSION": values.get("POPPY_ROBOT_FIRMWARE_VERSION", "").strip(),
             "UNITREE_SDK_VERSION": values.get("UNITREE_SDK_VERSION", "").strip(),
+            "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS": values.get(
+                "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS", ""
+            ).strip(),
         }
         if robot_mode == "unitree":
             for name, value in unitree_values.items():
                 if not value:
                     raise ConfigurationError(f"{name} is required for ROBOT_MODE=unitree")
+
+        telemetry_stale_timeout_seconds: float | None = None
+        if unitree_values["POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS"]:
+            telemetry_stale_timeout_seconds = _parse_positive_finite_float(
+                unitree_values["POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS"],
+                "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS",
+            )
 
         return cls(
             robot_mode=robot_mode,
@@ -64,6 +76,7 @@ class AgentConfig:
             robot_edition=unitree_values["POPPY_ROBOT_EDITION"] or None,
             robot_firmware_version=unitree_values["POPPY_ROBOT_FIRMWARE_VERSION"] or None,
             unitree_sdk_version=unitree_values["UNITREE_SDK_VERSION"] or None,
+            unitree_telemetry_stale_timeout_seconds=telemetry_stale_timeout_seconds,
         )
 
 
@@ -74,3 +87,13 @@ def _parse_bool(value: str, name: str) -> bool:
     if normalized == "false":
         return False
     raise ConfigurationError(f"{name} must be true or false")
+
+
+def _parse_positive_finite_float(value: str, name: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} must be a positive finite number") from exc
+    if not isfinite(parsed) or parsed <= 0:
+        raise ConfigurationError(f"{name} must be a positive finite number")
+    return parsed

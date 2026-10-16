@@ -23,6 +23,9 @@ Current placeholders:
 - `UNITREE_NETWORK_INTERFACE`: Linux network interface passed to the official SDK, such as `enp2s0`
 - `POPPY_ROBOT_MODEL`, `POPPY_ROBOT_EDITION`, `POPPY_ROBOT_FIRMWARE_VERSION`: explicit Unitree identity metadata when the SDK does not provide it
 - `UNITREE_SDK_VERSION`: explicit Unitree SDK metadata for registration
+- `POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS`: required positive finite timeout
+  for Unitree low-state freshness. A stale or absent snapshot reports the Robot as
+  `OFFLINE`; it is not a physical safety limit.
 
 Phase 2 consumes `ROBOT_MODE` and `POPPY_ROBOT_ID` only. Phase 3 additionally requires
 the server URL, token, and register metadata. Both `ROBOT_MODE` and `POPPY_ROBOT_ID`

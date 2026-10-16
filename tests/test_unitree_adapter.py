@@ -1,5 +1,6 @@
 import sys
 import types
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -22,6 +23,7 @@ def unitree_config() -> UnitreeGo2Config:
             firmware_version="configured",
             sdk_version="unitree_sdk2_python",
         ),
+        telemetry_stale_timeout_seconds=5.0,
     )
 
 
@@ -76,6 +78,9 @@ def test_adapter_uses_official_read_only_subscription_shape(monkeypatch) -> None
         power_v = 24.0
         power_a = 1.0
 
+        class bms_state:
+            soc = 72
+
     dds.LowState_ = LowState
     modules = {
         "unitree_sdk2py": package,
@@ -103,9 +108,100 @@ def test_adapter_uses_official_read_only_subscription_shape(monkeypatch) -> None
     status = adapter.status()
     assert status.connection_status == "ONLINE"
     assert status.operational_status == "UNAVAILABLE"
-    assert status.battery_percent is None
+    assert status.battery_percent == 72
     assert status.current_execution_id is None
     assert adapter.capabilities() == ("TELEMETRY",)
 
     adapter.shutdown()
     assert calls["closed"] is True
+
+
+def test_adapter_retains_snapshot_and_fails_closed_when_telemetry_is_stale(monkeypatch) -> None:
+    clock = [100.0]
+    received_at = datetime(2026, 10, 16, tzinfo=UTC)
+
+    class FakeSubscriber:
+        instance: "FakeSubscriber | None" = None
+
+        def __init__(self, _topic: str, _message_type: object) -> None:
+            self.handler = None
+            FakeSubscriber.instance = self
+
+        def Init(self, handler, _queue_length: int) -> None:
+            self.handler = handler
+
+    class LowState:
+        class bms_state:
+            soc = 100
+
+    monkeypatch.setattr(
+        "poppy_agent.robot.unitree._load_sdk",
+        lambda: (lambda _domain, _interface: None, FakeSubscriber, LowState),
+    )
+    adapter = UnitreeGo2Adapter(
+        unitree_config(),
+        monotonic_clock=lambda: clock[0],
+        utcnow=lambda: received_at,
+    )
+    adapter.initialize()
+    assert FakeSubscriber.instance is not None
+    assert FakeSubscriber.instance.handler is not None
+
+    FakeSubscriber.instance.handler(LowState())
+    snapshot = adapter.telemetry_snapshot()
+    assert snapshot is not None
+    assert snapshot.received_at == received_at
+    assert snapshot.battery_percent == 100
+    assert snapshot.mode is None
+    assert adapter.status().connection_status == "ONLINE"
+    assert adapter.status().battery_percent == 100
+
+    clock[0] += 5.01
+    stale_status = adapter.status()
+    assert stale_status.connection_status == "OFFLINE"
+    assert stale_status.battery_percent is None
+    assert stale_status.operational_status == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize("state_of_charge", [-1, 101, "75", True, None])
+def test_adapter_rejects_malformed_or_unverified_battery_values(
+    monkeypatch, state_of_charge: object
+) -> None:
+    class FakeSubscriber:
+        instance: "FakeSubscriber | None" = None
+
+        def __init__(self, _topic: str, _message_type: object) -> None:
+            self.handler = None
+            FakeSubscriber.instance = self
+
+        def Init(self, handler, _queue_length: int) -> None:
+            self.handler = handler
+
+    class LowState:
+        class bms_state:
+            soc = state_of_charge
+
+    monkeypatch.setattr(
+        "poppy_agent.robot.unitree._load_sdk",
+        lambda: (lambda _domain, _interface: None, FakeSubscriber, LowState),
+    )
+    adapter = UnitreeGo2Adapter(unitree_config())
+    adapter.initialize()
+    assert FakeSubscriber.instance is not None
+    assert FakeSubscriber.instance.handler is not None
+    FakeSubscriber.instance.handler(LowState())
+
+    assert adapter.status().connection_status == "ONLINE"
+    assert adapter.status().battery_percent is None
+    assert adapter.telemetry_snapshot() is not None
+    assert adapter.telemetry_snapshot().battery_percent is None
+
+
+def test_unitree_config_requires_positive_explicit_stale_timeout() -> None:
+    identity = unitree_config().identity
+    with pytest.raises(ValueError, match="must be explicit"):
+        UnitreeGo2Config(network_interface="enp2s0", identity=identity)
+    with pytest.raises(ValueError, match="must be positive"):
+        UnitreeGo2Config(
+            network_interface="enp2s0", identity=identity, telemetry_stale_timeout_seconds=0
+        )
