@@ -201,7 +201,79 @@ def test_unitree_config_requires_positive_explicit_stale_timeout() -> None:
     identity = unitree_config().identity
     with pytest.raises(ValueError, match="must be explicit"):
         UnitreeGo2Config(network_interface="enp2s0", identity=identity)
-    with pytest.raises(ValueError, match="must be positive"):
-        UnitreeGo2Config(
-            network_interface="enp2s0", identity=identity, telemetry_stale_timeout_seconds=0
-        )
+    for invalid_timeout in (0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="must be positive and finite"):
+            UnitreeGo2Config(
+                network_interface="enp2s0",
+                identity=identity,
+                telemetry_stale_timeout_seconds=invalid_timeout,
+            )
+
+
+def test_adapter_ignores_late_callback_after_shutdown_and_resets_on_reinitialize(
+    monkeypatch,
+) -> None:
+    subscribers: list[object] = []
+
+    class FakeSubscriber:
+        def __init__(self, _topic: str, _message_type: object) -> None:
+            self.handler = None
+            self.closed = False
+            subscribers.append(self)
+
+        def Init(self, handler, _queue_length: int) -> None:
+            self.handler = handler
+
+        def Close(self) -> None:
+            self.closed = True
+
+    class LowState:
+        class bms_state:
+            soc = 55
+
+    monkeypatch.setattr(
+        "poppy_agent.robot.unitree._load_sdk",
+        lambda: (lambda _domain, _interface: None, FakeSubscriber, LowState),
+    )
+    adapter = UnitreeGo2Adapter(unitree_config())
+    adapter.initialize()
+    first_subscriber = subscribers[0]
+    assert isinstance(first_subscriber, FakeSubscriber)
+    assert first_subscriber.handler is not None
+    first_subscriber.handler(LowState())
+    assert adapter.status().connection_status == "ONLINE"
+
+    adapter.shutdown()
+    assert first_subscriber.closed is True
+    first_subscriber.handler(LowState())
+    with pytest.raises(RuntimeError, match="not initialized"):
+        adapter.status()
+
+    adapter.initialize()
+    assert len(subscribers) == 2
+    assert adapter.status().connection_status == "OFFLINE"
+
+
+def test_adapter_cleans_up_when_subscription_initialization_fails(monkeypatch) -> None:
+    class FailingSubscriber:
+        closed = False
+
+        def __init__(self, _topic: str, _message_type: object) -> None:
+            pass
+
+        def Init(self, _handler, _queue_length: int) -> None:
+            raise RuntimeError("subscription init failed")
+
+        def Close(self) -> None:
+            type(self).closed = True
+
+    monkeypatch.setattr(
+        "poppy_agent.robot.unitree._load_sdk",
+        lambda: (lambda _domain, _interface: None, FailingSubscriber, object),
+    )
+    adapter = UnitreeGo2Adapter(unitree_config())
+    with pytest.raises(RuntimeError, match="subscription init failed"):
+        adapter.initialize()
+    assert FailingSubscriber.closed is True
+    with pytest.raises(RuntimeError, match="not initialized"):
+        adapter.status()

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import import_module
+from math import isfinite
 from threading import RLock
 from time import monotonic
 from typing import Any
@@ -30,8 +31,11 @@ class UnitreeGo2Config:
             raise ValueError("network_interface must be explicit")
         if self.telemetry_stale_timeout_seconds is None:
             raise ValueError("telemetry_stale_timeout_seconds must be explicit")
-        if self.telemetry_stale_timeout_seconds <= 0:
-            raise ValueError("telemetry_stale_timeout_seconds must be positive")
+        if (
+            not isfinite(self.telemetry_stale_timeout_seconds)
+            or self.telemetry_stale_timeout_seconds <= 0
+        ):
+            raise ValueError("telemetry_stale_timeout_seconds must be positive and finite")
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,22 +73,34 @@ class UnitreeGo2Adapter:
 
     def initialize(self) -> None:
         """Initialize DDS and subscribe to the official Go2 low-state topic."""
-        if self._initialized:
-            return
-        channel_factory_initialize, channel_subscriber, low_state_type = _load_sdk()
-        channel_factory_initialize(0, self._config.network_interface)
-        subscriber = channel_subscriber("rt/lowstate", low_state_type)
-        subscriber.Init(self._handle_state, 10)
-        self._subscriber = subscriber
-        self._initialized = True
+        with self._lock:
+            if self._initialized:
+                return
+            channel_factory_initialize, channel_subscriber, low_state_type = _load_sdk()
+            channel_factory_initialize(0, self._config.network_interface)
+            subscriber = channel_subscriber("rt/lowstate", low_state_type)
+            self._subscriber = subscriber
+            self._last_received_monotonic = None
+            self._telemetry_snapshot = None
+            self._initialized = True
+            try:
+                subscriber.Init(self._handle_state, 10)
+            except Exception:
+                if self._subscriber is subscriber:
+                    self._subscriber = None
+                    self._initialized = False
+                close = getattr(subscriber, "Close", None)
+                if callable(close):
+                    close()
+                raise
 
     def identity(self) -> RobotIdentity:
         self._require_initialized()
         return self._config.identity
 
     def status(self) -> RobotStatus:
-        self._require_initialized()
         with self._lock:
+            self._require_initialized()
             snapshot = self._telemetry_snapshot
             connection_status = "ONLINE" if self._telemetry_is_recent_locked() else "OFFLINE"
         return RobotStatus(
@@ -100,8 +116,8 @@ class UnitreeGo2Adapter:
 
     def telemetry_snapshot(self) -> UnitreeTelemetrySnapshot | None:
         """Return the latest read-only snapshot without extending the Server payload."""
-        self._require_initialized()
         with self._lock:
+            self._require_initialized()
             return self._telemetry_snapshot
 
     def capabilities(self) -> tuple[str, ...]:
@@ -110,16 +126,21 @@ class UnitreeGo2Adapter:
 
     def shutdown(self) -> None:
         """Close only the read-only subscriber; no SDK command is sent."""
-        subscriber = self._subscriber
+        with self._lock:
+            subscriber = self._subscriber
+            self._subscriber = None
+            self._initialized = False
+            self._last_received_monotonic = None
+            self._telemetry_snapshot = None
         if subscriber is not None:
             close = getattr(subscriber, "Close", None)
             if callable(close):
                 close()
-        self._subscriber = None
-        self._initialized = False
 
     def _handle_state(self, message: object) -> None:
         with self._lock:
+            if not self._initialized:
+                return
             self._telemetry_snapshot = UnitreeTelemetrySnapshot(
                 received_at=self._utcnow(),
                 battery_percent=_battery_percent_from_low_state(message),
@@ -130,10 +151,8 @@ class UnitreeGo2Adapter:
         if self._last_received_monotonic is None:
             return False
         assert self._config.telemetry_stale_timeout_seconds is not None
-        return (
-            self._monotonic_clock() - self._last_received_monotonic
-            <= self._config.telemetry_stale_timeout_seconds
-        )
+        elapsed = self._monotonic_clock() - self._last_received_monotonic
+        return 0 <= elapsed <= self._config.telemetry_stale_timeout_seconds
 
     def _require_initialized(self) -> None:
         if not self._initialized:

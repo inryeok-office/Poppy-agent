@@ -25,7 +25,9 @@ Current placeholders:
 - `UNITREE_SDK_VERSION`: explicit Unitree SDK metadata for registration
 - `POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS`: required positive finite timeout
   for Unitree low-state freshness. A stale or absent snapshot reports the Robot as
-  `OFFLINE`; it is not a physical safety limit.
+  `OFFLINE`; it is not a physical safety limit. The approved GO2EDU001 deployment
+  value is `5.0` seconds; an existing Unitree EnvironmentFile must receive this
+  non-secret key before this Agent version is started.
 
 Phase 2 consumes `ROBOT_MODE` and `POPPY_ROBOT_ID` only. Phase 3 additionally requires
 the server URL, token, and register metadata. Both `ROBOT_MODE` and `POPPY_ROBOT_ID`

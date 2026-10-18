@@ -38,9 +38,10 @@ field that safely maps to Poppy operational status, so mode remains unknown and 
 adapter reports operational status as `UNAVAILABLE` until a documented read-only
 source proves a stronger state.
 
-`POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS` is required in Unitree mode. A missing
-or stale low-state snapshot reports `OFFLINE`; a fresh snapshot reports `ONLINE`.
-This freshness policy does not enable physical execution or establish Robot readiness.
+`POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS` is required in Unitree mode. The
+approved GO2EDU001 value is `5.0` seconds. A missing or stale low-state snapshot
+reports `OFFLINE`; a fresh snapshot reports `ONLINE`. This freshness policy does not
+enable physical execution or establish Robot readiness.
 
 ## Runtime evidence
 
