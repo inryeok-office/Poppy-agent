@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime
 from inspect import signature
 from threading import Event
@@ -56,6 +57,7 @@ from poppy_agent.observability import (
 )
 from poppy_agent.operational_status import (
     AgentOperationalSnapshot,
+    LocalTelemetryEvidence,
     OperationalStatusTracker,
     RuntimeConnectivityState,
     RuntimeLifecycleState,
@@ -964,7 +966,48 @@ class AgentServerRuntime:
         self._publish_status()
 
     def _publish_status(self) -> None:
-        self._status_publisher.publish(self._operational_status.snapshot())
+        snapshot = self._operational_status.snapshot()
+        telemetry = self._local_telemetry_evidence()
+        if telemetry is not None:
+            snapshot = replace(snapshot, telemetry=telemetry)
+        self._status_publisher.publish(snapshot)
+
+    def _local_telemetry_evidence(self) -> LocalTelemetryEvidence | None:
+        """Read existing adapter memory without creating any DDS object.
+
+        Only adapters that already expose a snapshot participate. Malformed or
+        unavailable optional evidence is omitted rather than changing runtime
+        readiness or the Agent-to-Server heartbeat DTO.
+        """
+
+        getter = getattr(self.agent.adapter, "telemetry_snapshot", None)
+        if not callable(getter):
+            return None
+        try:
+            raw = getter()
+        except Exception:
+            return None
+        if raw is None:
+            return None
+        received_at = getattr(raw, "received_at", None)
+        if not isinstance(received_at, datetime):
+            return None
+        battery_percent = getattr(raw, "battery_percent", None)
+        if isinstance(battery_percent, bool) or (
+            battery_percent is not None
+            and (not isinstance(battery_percent, int) or not 0 <= battery_percent <= 100)
+        ):
+            return None
+        latest = self.agent.snapshot
+        fresh = latest is not None and latest.status.connection_status == "ONLINE"
+        try:
+            return LocalTelemetryEvidence(
+                received_at=received_at,
+                battery_percent=battery_percent if fresh else None,
+                fresh=fresh,
+            )
+        except ValueError:
+            return None
 
 
 def _robot_uuid(snapshot: AgentSnapshot) -> UUID:
