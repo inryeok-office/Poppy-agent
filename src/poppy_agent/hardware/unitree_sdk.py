@@ -79,10 +79,10 @@ def default_unitree_sport_client_factory(network_interface: str | None = None) -
 class UnitreeSdkCommandClient(UnitreeCommandClient):
     """Adapt an injected or lazily-created official SportClient.
 
-    The adapter does not issue ``StopMove`` for Poppy ``STOP``.  STOP is handled
-    by the existing program-level executor semantics.  Motion calls require an
-    explicit mapper because Poppy distance/angle requests are not SDK velocity
-    arguments.
+    Poppy ``STOP`` remains program-level termination.  ``StopMove`` is exposed
+    separately for best-effort interruption of an already active MOVE/TURN;
+    it is not a hardware emergency stop. Motion calls require an explicit
+    mapper because Poppy distance/angle requests are not SDK velocity arguments.
     """
 
     def __init__(
@@ -159,6 +159,10 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
         if not isinstance(command, UnitreeMotionCommand):
             raise UnitreeSdkCommandError("motion mapper returned an invalid command")
         return self._call_operation("Move", command.vx, command.vy, command.vyaw)
+
+    def stop_move(self) -> bool:
+        """Call official ``StopMove`` after initialization, without E-stop claims."""
+        return self._call_operation("StopMove")
 
     def shutdown(self) -> None:
         """Close the SDK object when it exposes a close lifecycle method."""

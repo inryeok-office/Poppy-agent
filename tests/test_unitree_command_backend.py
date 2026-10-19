@@ -25,6 +25,7 @@ from poppy_agent.execution import (
     MockExecutionExecutor,
     MotionExecutionStrategy,
     MotionProfile,
+    PhysicalMotionPolicy,
     RecordingSleeper,
 )
 from poppy_agent.hardware import (
@@ -70,7 +71,12 @@ def initialized_backend(
     client = FakeUnitreeCommandClient(fail_operation=fail_operation)
     strategy = MotionExecutionStrategy(MotionProfile(0.5, 90.0)) if with_motion_strategy else None
     sleeper = RecordingSleeper() if with_motion_strategy else None
-    backend = UnitreeCommandBackend(client, motion_strategy=strategy, sleeper=sleeper)
+    backend = UnitreeCommandBackend(
+        client,
+        motion_strategy=strategy,
+        sleeper=sleeper,
+        motion_policy=PhysicalMotionPolicy.for_test() if with_motion_strategy else None,
+    )
     target = HardwareCommandTarget(backend)
     target.initialize()
     return client, backend, target
@@ -120,8 +126,9 @@ def test_motion_strategy_dispatches_plans_and_records_durations_in_fake_client()
     sleeper = RecordingSleeper()
     backend = UnitreeCommandBackend(
         client,
-        motion_strategy=MotionExecutionStrategy(MotionProfile(0.5, 90.0)),
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.1, 15.0)),
         sleeper=sleeper,
+        motion_policy=PhysicalMotionPolicy.for_test(),
     )
     target = HardwareCommandTarget(backend)
     target.initialize()
@@ -135,12 +142,12 @@ def test_motion_strategy_dispatches_plans_and_records_durations_in_fake_client()
             command(
                 0,
                 CommandType.MOVE,
-                MoveParameters(MoveDirection.FORWARD, 1.0),
+                MoveParameters(MoveDirection.FORWARD, 0.2),
             ),
             command(
                 1,
                 CommandType.TURN,
-                TurnParameters(TurnDirection.RIGHT, 45.0),
+                TurnParameters(TurnDirection.RIGHT, 10.0),
             ),
             command(2, CommandType.STOP, StopParameters()),
         )
@@ -154,16 +161,17 @@ def test_motion_strategy_dispatches_plans_and_records_durations_in_fake_client()
     assert client.calls[0].parameters.direction is MoveDirection.FORWARD
     assert client.calls[0].parameters.duration_seconds == 2.0  # type: ignore[union-attr]
     assert client.calls[1].parameters.direction is TurnDirection.RIGHT
-    assert client.calls[1].parameters.duration_seconds == 0.5  # type: ignore[union-attr]
-    assert sleeper.durations == [2.0, 0.5]
+    assert client.calls[1].parameters.duration_seconds == (10.0 / 15.0)  # type: ignore[union-attr]
+    assert sleeper.durations == [2.0, (10.0 / 15.0)]
 
 
 def test_invalid_motion_plan_is_rejected_before_previous_command_dispatch() -> None:
     client = FakeUnitreeCommandClient()
     backend = UnitreeCommandBackend(
         client,
-        motion_strategy=MotionExecutionStrategy(MotionProfile(0.5, 90.0)),
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.1, 15.0)),
         sleeper=RecordingSleeper(),
+        motion_policy=PhysicalMotionPolicy.for_test(),
     )
     target = HardwareCommandTarget(backend)
     target.initialize()
@@ -193,8 +201,9 @@ def test_motion_client_failure_propagates_without_sleeping() -> None:
     sleeper = RecordingSleeper()
     backend = UnitreeCommandBackend(
         client,
-        motion_strategy=MotionExecutionStrategy(MotionProfile(0.5, 90.0)),
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.1, 15.0)),
         sleeper=sleeper,
+        motion_policy=PhysicalMotionPolicy.for_test(),
     )
     target = HardwareCommandTarget(backend)
     target.initialize()
@@ -203,12 +212,13 @@ def test_motion_client_failure_propagates_without_sleeping() -> None:
         target,
         safety_policy=CommandSafetyPolicy(),
         bound_robot_id=ROBOT_ID,
-    ).execute(task(command(0, CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 1.0))))
+    ).execute(task(command(0, CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 0.2))))
 
     assert result.status is ExecutionStatus.FAILED
     assert result.failure_reason == (
         "execution target failed: configured fake Unitree client failure for Move"
     )
+    assert [call.operation for call in client.calls] == [UnitreeCommandOperation.STOP_MOVE]
     assert sleeper.durations == []
 
 
@@ -227,8 +237,9 @@ def test_motion_cancellation_remains_cancelled_through_hardware_target() -> None
 
     backend = UnitreeCommandBackend(
         client,
-        motion_strategy=MotionExecutionStrategy(MotionProfile(0.5, 90.0)),
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.1, 15.0)),
         sleeper=CancellingSleeper(),
+        motion_policy=PhysicalMotionPolicy.for_test(),
     )
     target = HardwareCommandTarget(backend)
     target.initialize()
@@ -237,10 +248,81 @@ def test_motion_cancellation_remains_cancelled_through_hardware_target() -> None
         target,
         safety_policy=CommandSafetyPolicy(),
         bound_robot_id=ROBOT_ID,
-    ).execute(task(command(0, CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 1.0))))
+    ).execute(task(command(0, CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 0.2))))
 
     assert result.status is ExecutionStatus.CANCELLED
-    assert [call.operation for call in client.calls] == [UnitreeCommandOperation.MOVE]
+    assert [call.operation for call in client.calls] == [
+        UnitreeCommandOperation.MOVE,
+        UnitreeCommandOperation.STOP_MOVE,
+    ]
+
+
+def test_stop_move_failure_is_preserved_with_primary_motion_failure() -> None:
+    client = FakeUnitreeCommandClient(fail_operation=UnitreeCommandOperation.MOVE)
+
+    # The fake only supports one configured failing operation.  Replace its
+    # stop method with a fake-only failure to prove both failures are retained.
+    def failed_stop() -> bool:
+        raise UnitreeCommandBackendError("configured fake StopMove failure")
+
+    client.stop_move = failed_stop  # type: ignore[method-assign]
+    backend = UnitreeCommandBackend(
+        client,
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.1, 15.0)),
+        sleeper=RecordingSleeper(),
+        motion_policy=PhysicalMotionPolicy.for_test(),
+    )
+    target = HardwareCommandTarget(backend)
+    target.initialize()
+
+    result = MockExecutionExecutor(
+        target,
+        safety_policy=CommandSafetyPolicy(),
+        bound_robot_id=ROBOT_ID,
+    ).execute(task(command(0, CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 0.2))))
+
+    assert result.status is ExecutionStatus.FAILED
+    assert result.failure_reason == (
+        "execution target failed: configured fake Unitree client failure for Move; "
+        "safety stop failed: configured fake StopMove failure"
+    )
+
+
+def test_shutdown_requests_stop_only_for_active_fake_motion() -> None:
+    client = FakeUnitreeCommandClient()
+    backend = UnitreeCommandBackend(
+        client,
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.1, 15.0)),
+        sleeper=RecordingSleeper(),
+        motion_policy=PhysicalMotionPolicy.for_test(),
+    )
+    backend.initialize()
+    backend._motion_active = True  # test-only representation of interrupted dispatch
+
+    backend.shutdown()
+
+    assert [call.operation for call in client.calls] == [UnitreeCommandOperation.STOP_MOVE]
+
+
+def test_failed_stop_move_is_not_retried_during_shutdown() -> None:
+    client = FakeUnitreeCommandClient()
+    attempts: list[str] = []
+
+    def failed_stop() -> bool:
+        attempts.append("StopMove")
+        raise UnitreeCommandBackendError("configured fake StopMove failure")
+
+    client.stop_move = failed_stop  # type: ignore[method-assign]
+    backend = UnitreeCommandBackend(client)
+    backend.initialize()
+    backend._motion_active = True  # test-only representation of interrupted dispatch
+
+    with pytest.raises(UnitreeCommandBackendError, match="StopMove"):
+        backend.request_stop()
+
+    backend.shutdown()
+
+    assert attempts == ["StopMove"]
 
 
 def test_posture_mapping_records_official_operation_shape_in_fake_client() -> None:

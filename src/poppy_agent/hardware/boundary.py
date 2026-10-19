@@ -186,6 +186,15 @@ class HardwareCommandTarget:
             raise ExecutionTargetError("hardware command port returned a non-boolean result")
         return result
 
+    def request_stop(self) -> None:
+        """Forward an optional best-effort active-motion stop request."""
+        request_stop = getattr(self._port, "request_stop", None)
+        if callable(request_stop):
+            try:
+                request_stop()
+            except Exception as exc:
+                raise ExecutionTargetError(str(exc)) from exc
+
     def shutdown(self) -> None:
         """Shut down the underlying boundary explicitly."""
         self._port.shutdown()

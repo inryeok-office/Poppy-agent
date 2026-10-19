@@ -7,6 +7,7 @@ from uuid import UUID
 
 from poppy_agent.execution.executor import MockExecutionExecutor
 from poppy_agent.execution.motion import MotionExecutionStrategy, MotionSleeper
+from poppy_agent.execution.physical_safety import PhysicalMotionPolicy
 from poppy_agent.execution.readiness import (
     PhysicalExecutionGate,
     PhysicalReadinessEvidence,
@@ -27,6 +28,7 @@ def create_unitree_execution_executor(
     network_interface: str | None = None,
     motion_strategy: MotionExecutionStrategy | None = None,
     sleeper: MotionSleeper | None = None,
+    motion_policy: PhysicalMotionPolicy | None = None,
 ) -> MockExecutionExecutor:
     """Create a Unitree-shaped executor only after the readiness gate passes.
 
@@ -46,6 +48,7 @@ def create_unitree_execution_executor(
         client,
         motion_strategy=motion_strategy,
         sleeper=sleeper,
+        motion_policy=motion_policy,
     )
     target = HardwareCommandTarget(backend)
     try:

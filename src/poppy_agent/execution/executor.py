@@ -115,7 +115,8 @@ class MockExecutionExecutor:
         return cast(list[MockCommandEvent], getattr(self.target, "events", []))
 
     def shutdown(self) -> None:
-        """Release an optional target resource without synthesizing a stop."""
+        """Request an active-motion stop before releasing an optional target."""
+        self._request_stop_if_supported()
         shutdown = getattr(self.target, "shutdown", None)
         if callable(shutdown):
             shutdown()
@@ -173,12 +174,21 @@ class MockExecutionExecutor:
                     self._sleeper.sleep(command.parameters.duration_seconds, token)
                 token.raise_if_cancelled()
             except ExecutionCancelledError:
+                stop_error = self._stop_error()
+                if stop_error is not None:
+                    return ExecutionResult(
+                        task.execution_id,
+                        ExecutionStatus.FAILED,
+                        failure_reason=f"execution cancelled; safety stop failed: {stop_error}",
+                    )
                 return ExecutionResult(task.execution_id, ExecutionStatus.CANCELLED)
             except ExecutionTargetError as exc:
+                stop_error = self._stop_error()
+                suffix = f"; safety stop failed: {stop_error}" if stop_error is not None else ""
                 return ExecutionResult(
                     execution_id=task.execution_id,
                     status=ExecutionStatus.FAILED,
-                    failure_reason=f"execution target failed: {exc}",
+                    failure_reason=f"execution target failed: {exc}{suffix}",
                 )
             if should_stop:
                 break
@@ -187,3 +197,16 @@ class MockExecutionExecutor:
             execution_id=task.execution_id,
             status=ExecutionStatus.COMPLETED,
         )
+
+    def _request_stop_if_supported(self) -> None:
+        """Ask a physical target to stop only when it has active-motion support."""
+        request_stop = getattr(self.target, "request_stop", None)
+        if callable(request_stop):
+            request_stop()
+
+    def _stop_error(self) -> str | None:
+        try:
+            self._request_stop_if_supported()
+        except Exception as exc:
+            return str(exc)
+        return None

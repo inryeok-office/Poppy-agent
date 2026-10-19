@@ -54,6 +54,9 @@ class FakeSdkClient:
     def Move(self, vx: float, vy: float, vyaw: float) -> object:
         return self._call("Move", vx, vy, vyaw)
 
+    def StopMove(self) -> object:
+        return self._call("StopMove")
+
     def Close(self) -> None:
         self.calls.append(("Close", ()))
 
@@ -150,10 +153,17 @@ def test_command_adapter_lifecycle_and_posture_mapping() -> None:
     client.initialize()
     assert client.sit() is True
     assert client.stand_up() is True
+    assert client.stop_move() is True
     client.shutdown()
     client.shutdown()
 
-    assert sdk.calls == [("Init", ()), ("Sit", ()), ("StandUp", ()), ("Close", ())]
+    assert sdk.calls == [
+        ("Init", ()),
+        ("Sit", ()),
+        ("StandUp", ()),
+        ("StopMove", ()),
+        ("Close", ()),
+    ]
     with pytest.raises(UnitreeSdkCommandError, match="not initialized"):
         client.stand_up()
 

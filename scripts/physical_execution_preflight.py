@@ -47,6 +47,7 @@ from poppy_agent.execution import (  # noqa: E402
     PhysicalCommandClientKind,
     PhysicalExecutionBlockedError,
     PhysicalExecutionGate,
+    PhysicalMotionPolicy,
     PhysicalReadinessEvidence,
     RecordingSleeper,
 )
@@ -118,6 +119,9 @@ class RecordingSportClient:
 
     def Move(self, vx: float, vy: float, vyaw: float) -> int:
         return self._operation("Move", vx, vy, vyaw)
+
+    def StopMove(self) -> int:
+        return self._operation("StopMove")
 
     def Close(self) -> None:
         self.calls.append(RecordingCall("Close"))
@@ -246,6 +250,7 @@ def _executor(
     motion_strategy: MotionExecutionStrategy | None = None,
     sleeper: RecordingSleeper | None = None,
     motion_mapper: Callable[[MotionPlan], UnitreeMotionCommand] | None = None,
+    motion_policy: PhysicalMotionPolicy | None = None,
 ) -> tuple[MockExecutionExecutor, list[int]]:
     adapter = UnitreeSdkCommandClient(sdk_client=sdk, motion_mapper=motion_mapper)
     factory_calls: list[int] = []
@@ -261,6 +266,7 @@ def _executor(
         client_factory=factory,
         motion_strategy=motion_strategy,
         sleeper=sleeper,
+        motion_policy=motion_policy,
     )
     return executor, factory_calls
 
@@ -297,6 +303,18 @@ def _test_only_mapper(plan: MotionPlan) -> UnitreeMotionCommand:
     if command_type is CommandType.MOVE:
         return UnitreeMotionCommand(0.25 if direction is MoveDirection.FORWARD else -0.25, 0.0, 0.0)
     return UnitreeMotionCommand(0.0, 0.0, 0.5 if direction is TurnDirection.LEFT else -0.5)
+
+
+def _test_only_motion_policy() -> PhysicalMotionPolicy:
+    """Fixture-only boundaries matching the recording-double scenarios."""
+    return PhysicalMotionPolicy(
+        allowed_commands=frozenset({CommandType.MOVE, CommandType.TURN}),
+        max_move_distance_meters=1.0,
+        max_turn_angle_degrees=90.0,
+        max_linear_rate_meters_per_second=0.5,
+        max_angular_rate_degrees_per_second=90.0,
+        max_duration_seconds=2.0,
+    )
 
 
 def run_preflight(*, emit: bool = True) -> tuple[PreflightPhaseResult, ...]:
@@ -441,6 +459,7 @@ def _mapped_motion_phase() -> str:
         motion_strategy=strategy,
         sleeper=sleeper,
         motion_mapper=_test_only_mapper,
+        motion_policy=_test_only_motion_policy(),
     )
     try:
         result = executor.execute(
@@ -557,6 +576,7 @@ def _cancellation_phase() -> str:
         motion_strategy=MotionExecutionStrategy(MotionProfile(0.5, 90.0)),
         sleeper=sleeper,
         motion_mapper=_test_only_mapper,
+        motion_policy=_test_only_motion_policy(),
     )
     try:
         during = executor.execute(_task(authority.poll()))
@@ -585,6 +605,7 @@ def _disconnect_phase() -> str:
         motion_strategy=MotionExecutionStrategy(MotionProfile(0.5, 90.0)),
         sleeper=sleeper,
         motion_mapper=_test_only_mapper,
+        motion_policy=_test_only_motion_policy(),
     )
     try:
         payload = authority.poll()

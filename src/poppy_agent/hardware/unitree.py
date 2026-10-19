@@ -14,6 +14,7 @@ from typing import Protocol
 from poppy_agent.command import CommandType, Posture, PostureParameters
 from poppy_agent.execution.cancellation import ExecutionCancellationToken
 from poppy_agent.execution.motion import MotionExecutionStrategy, MotionPlan, MotionSleeper
+from poppy_agent.execution.physical_safety import PhysicalMotionPolicy
 from poppy_agent.hardware.boundary import HardwareCommandIntent, HardwareCommandPort
 
 
@@ -23,6 +24,7 @@ class UnitreeCommandOperation(StrEnum):
     SIT = "Sit"
     STAND_UP = "StandUp"
     MOVE = "Move"
+    STOP_MOVE = "StopMove"
 
 
 class UnitreeCommandClient(Protocol):
@@ -39,6 +41,9 @@ class UnitreeCommandClient(Protocol):
 
     def execute_motion(self, plan: MotionPlan) -> bool:
         """Represent a future SDK Move call after strategy planning."""
+
+    def stop_move(self) -> bool:
+        """Request SDK transport-level motion stop; this is not a hardware E-stop."""
 
     def shutdown(self) -> None:
         """Release client resources."""
@@ -97,6 +102,9 @@ class FakeUnitreeCommandClient:
         """Record a planned motion without converting or executing it."""
         return self._record(UnitreeCommandOperation.MOVE, plan)
 
+    def stop_move(self) -> bool:
+        return self._record(UnitreeCommandOperation.STOP_MOVE)
+
     def shutdown(self) -> None:
         """Shutdown only the in-memory fake client."""
         self._initialized = False
@@ -133,11 +141,15 @@ class UnitreeCommandBackend(HardwareCommandPort):
         *,
         motion_strategy: MotionExecutionStrategy | None = None,
         sleeper: MotionSleeper | None = None,
+        motion_policy: PhysicalMotionPolicy | None = None,
     ) -> None:
         self._client = client
         self._motion_strategy = motion_strategy
         self._sleeper = sleeper
+        self._motion_policy = motion_policy
         self._initialized = False
+        self._motion_active = False
+        self._stop_attempted = False
 
     @property
     def initialized(self) -> bool:
@@ -158,6 +170,7 @@ class UnitreeCommandBackend(HardwareCommandPort):
             and self._motion_strategy is not None
             and self._motion_strategy.configured
             and self._sleeper is not None
+            and self._motion_policy is not None
         )
 
     def preflight(self, intent: HardwareCommandIntent) -> None:
@@ -168,7 +181,24 @@ class UnitreeCommandBackend(HardwareCommandPort):
                     f"Unitree command mapping is unsupported for {intent.type.value}"
                 )
             assert self._motion_strategy is not None
-            self._motion_strategy.plan(intent)
+            assert self._motion_policy is not None
+            self._motion_policy.validate(self._motion_strategy.plan(intent))
+
+    def request_stop(self) -> None:
+        """Best-effort SDK StopMove for an active motion only.
+
+        This is transport-dependent movement stop, not a hardware emergency
+        stop.  A failure is deliberately propagated to the executor.
+        """
+        if not self._motion_active or self._stop_attempted:
+            return
+        self._stop_attempted = True
+        try:
+            result = self._client.stop_move()
+            if result is not True:
+                raise UnitreeCommandBackendError("Unitree client reported failure for StopMove")
+        finally:
+            self._motion_active = False
 
     def dispatch(self, intent: HardwareCommandIntent) -> bool:
         return self._dispatch(intent, None)
@@ -202,12 +232,17 @@ class UnitreeCommandBackend(HardwareCommandPort):
                     f"Unitree command mapping is unsupported for {intent.type.value}"
                 )
             plan = self._motion_strategy.plan(intent)
+            assert self._motion_policy is not None
+            self._motion_policy.validate(plan)
+            self._motion_active = True
+            self._stop_attempted = False
             result = self._client.execute_motion(plan)
             if result is not True:
                 raise UnitreeCommandBackendError(
                     f"Unitree client reported failure for {intent.type.value}"
                 )
             self._sleeper.sleep(plan.duration_seconds, cancellation_token)
+            self._motion_active = False
             return False
         if not isinstance(intent.parameters, PostureParameters):
             raise UnitreeCommandBackendError("POSTURE intent does not have typed parameters")
@@ -222,8 +257,9 @@ class UnitreeCommandBackend(HardwareCommandPort):
         return False
 
     def shutdown(self) -> None:
-        """Shutdown the injected client without synthesizing a stop command."""
+        """Request stop for an active motion before releasing the client."""
         try:
+            self.request_stop()
             self._client.shutdown()
         finally:
             self._initialized = False
