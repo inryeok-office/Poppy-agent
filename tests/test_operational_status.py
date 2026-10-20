@@ -105,12 +105,24 @@ def test_server_success_timestamps_only_change_on_success() -> None:
 def test_snapshot_json_is_stable_and_secret_free() -> None:
     payload = ready_tracker().snapshot(observed_at=NOW).to_dict()
 
-    assert payload["schemaVersion"] == 2
+    assert payload["schemaVersion"] == 3
     assert payload["lifecycleState"] == "READY"
     assert payload["connectivityState"] == "CONNECTED"
     serialized = str(payload)
     for secret in ("agentToken", "Authorization", "commandPayload", "sessionToken"):
         assert secret not in serialized
+
+
+def test_status_exposes_fail_closed_physical_readiness_without_secrets() -> None:
+    payload = OperationalStatusTracker().snapshot(observed_at=NOW).to_dict()
+
+    assert payload["physicalExecutionEnabled"] is False
+    assert payload["physicalReadiness"]["ready"] is False
+    assert "PHYSICAL_EXECUTION_DISABLED" in payload["physicalReadiness"]["blockers"]
+    assert payload["physicalReadiness"]["telemetryFresh"] is None
+    assert payload["physicalReadiness"]["batterySufficient"] is None
+    assert payload["physicalReadiness"]["capabilityVerified"] is None
+    assert "token" not in str(payload).lower()
 
 
 def test_status_publisher_writes_atomic_json_and_clears(tmp_path) -> None:
@@ -119,7 +131,7 @@ def test_status_publisher_writes_atomic_json_and_clears(tmp_path) -> None:
     publisher.publish(ready_tracker().snapshot(observed_at=NOW))
 
     payload = loads(path.read_text(encoding="utf-8"))
-    assert payload["schemaVersion"] == 2
+    assert payload["schemaVersion"] == 3
     assert payload["agentId"] == str(AGENT_ID)
     assert not list(path.parent.glob("*.tmp"))
 

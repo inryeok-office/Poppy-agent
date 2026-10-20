@@ -12,7 +12,12 @@ from uuid import UUID
 
 from poppy_agent.agent import create_agent
 from poppy_agent.config import AgentConfig, ConfigurationError
-from poppy_agent.execution import MockExecutionExecutor, PhysicalExecutionBlockedError
+from poppy_agent.execution import (
+    MockExecutionExecutor,
+    MotionExecutionStrategy,
+    MotionProfile,
+    PhysicalExecutionBlockedError,
+)
 from poppy_agent.hardware import create_unitree_execution_executor
 from poppy_agent.observability import (
     RUNTIME_SHUTDOWN_FAILED,
@@ -54,7 +59,14 @@ def main() -> int:
         server_config = ServerConfig.from_environment()
         agent = create_agent(agent_config)
         server = ServerClient(server_config)
-        runtime = AgentServerRuntime(agent, server, server_config)
+        runtime = AgentServerRuntime(
+            agent,
+            server,
+            server_config,
+            physical_execution_enabled=getattr(agent_config, "enable_physical_execution", False),
+            physical_profile_name=getattr(agent_config, "physical_motion_profile_name", None),
+            physical_profile_version=getattr(agent_config, "physical_motion_profile_version", None),
+        )
         executor = _create_executor(agent_config)
 
         stop_event = Event()
@@ -118,6 +130,15 @@ def _create_executor(config: AgentConfig) -> MockExecutionExecutor | None:
                 robot_id=UUID(raw_robot_id),
                 physical_execution_enabled=True,
                 network_interface=getattr(config, "network_interface", None),
+                motion_strategy=MotionExecutionStrategy(
+                    MotionProfile(
+                        config.physical_motion_policy.max_linear_rate_meters_per_second,
+                        config.physical_motion_policy.max_angular_rate_degrees_per_second,
+                    )
+                )
+                if config.physical_motion_policy is not None
+                else None,
+                motion_policy=config.physical_motion_policy,
             )
         return None
     raw_robot_id = getattr(config, "robot_id", None)

@@ -7,6 +7,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from math import isfinite
 
+from poppy_agent.command import CommandType
+from poppy_agent.execution import PhysicalMotionPolicy
+
 
 class ConfigurationError(ValueError):
     """Raised when required Agent configuration is missing or invalid."""
@@ -25,6 +28,10 @@ class AgentConfig:
     robot_firmware_version: str | None = None
     unitree_sdk_version: str | None = None
     unitree_telemetry_stale_timeout_seconds: float | None = None
+    physical_motion_profile_name: str | None = None
+    physical_motion_profile_version: str | None = None
+    physical_motion_policy: PhysicalMotionPolicy | None = None
+    physical_minimum_battery_percent: int | None = None
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> AgentConfig:
@@ -67,6 +74,44 @@ class AgentConfig:
                 "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS",
             )
 
+        physical_profile_name: str | None = None
+        physical_profile_version: str | None = None
+        physical_motion_policy: PhysicalMotionPolicy | None = None
+        physical_minimum_battery_percent: int | None = None
+        if physical_execution_enabled:
+            physical_profile_name = _required(values, "POPPY_PHYSICAL_MOTION_PROFILE_NAME")
+            physical_profile_version = _required(values, "POPPY_PHYSICAL_MOTION_PROFILE_VERSION")
+            allowed_commands = _parse_motion_commands(
+                _required(values, "POPPY_PHYSICAL_ALLOWED_COMMANDS")
+            )
+            physical_motion_policy = PhysicalMotionPolicy(
+                allowed_commands=allowed_commands,
+                max_move_distance_meters=_parse_positive_finite_float(
+                    _required(values, "POPPY_PHYSICAL_MAX_MOVE_DISTANCE_METERS"),
+                    "POPPY_PHYSICAL_MAX_MOVE_DISTANCE_METERS",
+                ),
+                max_turn_angle_degrees=_parse_positive_finite_float(
+                    _required(values, "POPPY_PHYSICAL_MAX_TURN_ANGLE_DEGREES"),
+                    "POPPY_PHYSICAL_MAX_TURN_ANGLE_DEGREES",
+                ),
+                max_linear_rate_meters_per_second=_parse_positive_finite_float(
+                    _required(values, "POPPY_PHYSICAL_MAX_LINEAR_RATE_METERS_PER_SECOND"),
+                    "POPPY_PHYSICAL_MAX_LINEAR_RATE_METERS_PER_SECOND",
+                ),
+                max_angular_rate_degrees_per_second=_parse_positive_finite_float(
+                    _required(values, "POPPY_PHYSICAL_MAX_ANGULAR_RATE_DEGREES_PER_SECOND"),
+                    "POPPY_PHYSICAL_MAX_ANGULAR_RATE_DEGREES_PER_SECOND",
+                ),
+                max_duration_seconds=_parse_positive_finite_float(
+                    _required(values, "POPPY_PHYSICAL_MAX_COMMAND_DURATION_SECONDS"),
+                    "POPPY_PHYSICAL_MAX_COMMAND_DURATION_SECONDS",
+                ),
+            )
+            physical_minimum_battery_percent = _parse_battery_percent(
+                _required(values, "POPPY_PHYSICAL_MIN_BATTERY_PERCENT"),
+                "POPPY_PHYSICAL_MIN_BATTERY_PERCENT",
+            )
+
         return cls(
             robot_mode=robot_mode,
             robot_id=robot_id,
@@ -77,7 +122,45 @@ class AgentConfig:
             robot_firmware_version=unitree_values["POPPY_ROBOT_FIRMWARE_VERSION"] or None,
             unitree_sdk_version=unitree_values["UNITREE_SDK_VERSION"] or None,
             unitree_telemetry_stale_timeout_seconds=telemetry_stale_timeout_seconds,
+            physical_motion_profile_name=physical_profile_name,
+            physical_motion_profile_version=physical_profile_version,
+            physical_motion_policy=physical_motion_policy,
+            physical_minimum_battery_percent=physical_minimum_battery_percent,
         )
+
+
+def _required(values: Mapping[str, str], name: str) -> str:
+    value = values.get(name, "").strip()
+    if not value:
+        raise ConfigurationError(f"{name} is required when physical execution is enabled")
+    return value
+
+
+def _parse_motion_commands(value: str) -> frozenset[CommandType]:
+    names = [item.strip() for item in value.split(",")]
+    if not names or any(not name for name in names):
+        raise ConfigurationError("POPPY_PHYSICAL_ALLOWED_COMMANDS must be a non-empty comma list")
+    try:
+        commands = frozenset(CommandType(name) for name in names)
+    except ValueError as exc:
+        raise ConfigurationError(
+            "POPPY_PHYSICAL_ALLOWED_COMMANDS contains an unknown command"
+        ) from exc
+    if not commands or not commands <= {CommandType.MOVE, CommandType.TURN}:
+        raise ConfigurationError(
+            "POPPY_PHYSICAL_ALLOWED_COMMANDS must contain only MOVE and/or TURN"
+        )
+    return commands
+
+
+def _parse_battery_percent(value: str, name: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} must be an integer from 0 through 100") from exc
+    if isinstance(parsed, bool) or str(parsed) != value or not 0 <= parsed <= 100:
+        raise ConfigurationError(f"{name} must be an integer from 0 through 100")
+    return parsed
 
 
 def _parse_bool(value: str, name: str) -> bool:

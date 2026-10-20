@@ -92,7 +92,16 @@ class AgentServerRuntimeError(RuntimeError):
 class AgentServerRuntime:
     """Register an Agent and coordinate heartbeat and optional execution work."""
 
-    def __init__(self, agent: Agent, server: ServerClient, config: ServerConfig) -> None:
+    def __init__(
+        self,
+        agent: Agent,
+        server: ServerClient,
+        config: ServerConfig,
+        *,
+        physical_execution_enabled: bool = False,
+        physical_profile_name: str | None = None,
+        physical_profile_version: str | None = None,
+    ) -> None:
         self.agent = agent
         self.server = server
         self.config = config
@@ -100,7 +109,11 @@ class AgentServerRuntime:
         self.active_execution_id: UUID | None = None
         self.connectivity_state = RuntimeConnectivityState.CONNECTED
         self._reconnect_delay_seconds = config.reconnect_initial_delay_seconds
-        self._operational_status = OperationalStatusTracker()
+        self._operational_status = OperationalStatusTracker(
+            physical_execution_enabled=physical_execution_enabled,
+            physical_profile_name=physical_profile_name,
+            physical_profile_version=physical_profile_version,
+        )
         self._status_publisher = StatusSnapshotPublisher(
             getattr(config, "runtime_status_path", None)
         )

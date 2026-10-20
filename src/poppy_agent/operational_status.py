@@ -13,6 +13,7 @@ from tempfile import NamedTemporaryFile
 from threading import Lock
 from uuid import UUID
 
+from poppy_agent.execution import PhysicalExecutionGate
 from poppy_agent.observability import (
     OPERATIONAL_STATUS_PUBLISH_FAILED,
     log_event,
@@ -101,10 +102,16 @@ class AgentOperationalSnapshot:
     last_server_success_at: datetime | None
     last_heartbeat_success_at: datetime | None
     telemetry: LocalTelemetryEvidence | None = None
+    physical_execution_enabled: bool = False
+    physical_profile_name: str | None = None
+    physical_profile_version: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable camelCase JSON representation."""
 
+        readiness = PhysicalExecutionGate().evaluate(
+            physical_execution_enabled=self.physical_execution_enabled
+        )
         return {
             "schemaVersion": self.schema_version,
             "observedAt": self.observed_at.isoformat(),
@@ -122,13 +129,33 @@ class AgentOperationalSnapshot:
             "lastServerSuccessAt": _datetime_value(self.last_server_success_at),
             "lastHeartbeatSuccessAt": _datetime_value(self.last_heartbeat_success_at),
             "telemetry": self.telemetry.to_dict() if self.telemetry is not None else None,
+            "physicalExecutionEnabled": self.physical_execution_enabled,
+            "physicalReadiness": {
+                "ready": readiness.ready,
+                "blockers": [reason.value for reason in readiness.blocking_reasons],
+                "profileName": self.physical_profile_name,
+                "profileVersion": self.physical_profile_version,
+                "telemetryFresh": None,
+                "batterySufficient": None,
+                "capabilityVerified": None,
+                "robotIdentityMatched": None,
+                "serverReachable": self.connectivity_state is RuntimeConnectivityState.CONNECTED,
+            },
         }
 
 
 class OperationalStatusTracker:
     """Thread-safe mutable state that produces immutable operational snapshots."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        physical_execution_enabled: bool = False,
+        physical_profile_name: str | None = None,
+        physical_profile_version: str | None = None,
+    ) -> None:
+        if type(physical_execution_enabled) is not bool:
+            raise TypeError("physical_execution_enabled must be a bool")
         self._lock = Lock()
         self._lifecycle_state = RuntimeLifecycleState.STARTING
         self._connectivity_state = RuntimeConnectivityState.CONNECTED
@@ -141,6 +168,9 @@ class OperationalStatusTracker:
         self._authentication_failed = False
         self._last_server_success_at: datetime | None = None
         self._last_heartbeat_success_at: datetime | None = None
+        self._physical_execution_enabled = physical_execution_enabled
+        self._physical_profile_name = physical_profile_name
+        self._physical_profile_version = physical_profile_version
 
     def mark_registered(self, agent_id: UUID, robot_id: UUID, *, at: datetime) -> None:
         with self._lock:
@@ -197,6 +227,9 @@ class OperationalStatusTracker:
             authentication_failed = self._authentication_failed
             last_server_success_at = self._last_server_success_at
             last_heartbeat_success_at = self._last_heartbeat_success_at
+            physical_execution_enabled = self._physical_execution_enabled
+            physical_profile_name = self._physical_profile_name
+            physical_profile_version = self._physical_profile_version
 
         reasons: list[OperationalReadinessReason] = []
         if not registered:
@@ -219,7 +252,7 @@ class OperationalStatusTracker:
             operational_ready and polling_enabled and active_execution_id is None
         )
         return AgentOperationalSnapshot(
-            schema_version=2,
+            schema_version=3,
             observed_at=observed,
             lifecycle_state=lifecycle,
             connectivity_state=connectivity,
@@ -234,6 +267,9 @@ class OperationalStatusTracker:
             readiness_reasons=tuple(reasons),
             last_server_success_at=last_server_success_at,
             last_heartbeat_success_at=last_heartbeat_success_at,
+            physical_execution_enabled=physical_execution_enabled,
+            physical_profile_name=physical_profile_name,
+            physical_profile_version=physical_profile_version,
         )
 
 

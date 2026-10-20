@@ -20,7 +20,7 @@ class FakeRuntime:
     start_error: Exception | None = None
     loop_error: Exception | None = None
 
-    def __init__(self, agent: object, server: object, config: object) -> None:
+    def __init__(self, agent: object, server: object, config: object, **_kwargs: object) -> None:
         self.calls: list[str] = []
         self.executors: list[object] = []
         self.__class__.instances.append(self)
