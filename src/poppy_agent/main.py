@@ -66,13 +66,16 @@ def main() -> int:
             physical_execution_enabled=getattr(agent_config, "enable_physical_execution", False),
             physical_profile_name=getattr(agent_config, "physical_motion_profile_name", None),
             physical_profile_version=getattr(agent_config, "physical_motion_profile_version", None),
+            physical_capability_evidence_policy=getattr(
+                agent_config, "physical_capability_evidence_policy", None
+            ),
         )
-        executor = _create_executor(agent_config)
 
         stop_event = Event()
         register_signal_handlers(stop_event)
 
         runtime.start()
+        executor = _create_executor(agent_config)
         if executor is None:
             runtime.run_heartbeat_loop(stop_event)
         else:

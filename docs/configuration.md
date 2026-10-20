@@ -28,6 +28,14 @@ Current placeholders:
   `OFFLINE`; it is not a physical safety limit. The approved GO2EDU001 deployment
   value is `5.0` seconds; an existing Unitree EnvironmentFile must receive this
   non-secret key before this Agent version is started.
+- `POPPY_PHYSICAL_REQUIRED_CAPABILITY_CODE`: administrator-owned command capability
+  required for a future physical executor, such as `COMMAND_MOVE`. Required only
+  with `POPPY_ENABLE_PHYSICAL_EXECUTION=true`; it has no default.
+- `POPPY_PHYSICAL_CAPABILITY_REFRESH_INTERVAL_SECONDS`,
+  `POPPY_PHYSICAL_CAPABILITY_TTL_SECONDS`, and
+  `POPPY_PHYSICAL_CAPABILITY_REQUEST_TIMEOUT_SECONDS`: explicit positive finite
+  bounds for read-only capability evidence. TTL must exceed the refresh interval.
+  They are not required or read in software-only mode.
 
 Phase 2 consumes `ROBOT_MODE` and `POPPY_ROBOT_ID` only. Phase 3 additionally requires
 the server URL, token, and register metadata. Both `ROBOT_MODE` and `POPPY_ROBOT_ID`

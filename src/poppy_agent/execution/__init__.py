@@ -6,6 +6,13 @@ from poppy_agent.execution.cancellation import (
     ExecutionCancelledError,
     InterruptibleSleeper,
 )
+from poppy_agent.execution.capability_evidence import (
+    CapabilityEvidenceCache,
+    CapabilityEvidenceClient,
+    CapabilityEvidenceFailure,
+    CapabilityEvidencePolicy,
+    CapabilityEvidenceSnapshot,
+)
 from poppy_agent.execution.executor import (
     CommandExecutionTarget,
     ExecutionExecutor,
@@ -59,6 +66,11 @@ __all__ = [
     "ExecutionSafetyValidator",
     "ExecutionExecutor",
     "ExecutionCancellationToken",
+    "CapabilityEvidenceCache",
+    "CapabilityEvidenceClient",
+    "CapabilityEvidenceFailure",
+    "CapabilityEvidencePolicy",
+    "CapabilityEvidenceSnapshot",
     "ExecutionCancelledError",
     "ExecutionTargetError",
     "ExecutionResult",

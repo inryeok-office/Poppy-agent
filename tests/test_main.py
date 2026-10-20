@@ -152,13 +152,17 @@ def test_main_fails_closed_before_sdk_for_blocked_unitree_execution(
                     "robot_mode": "unitree",
                     "robot_id": str(AGENT_ID),
                     "enable_physical_execution": True,
+                    "physical_motion_policy": None,
                 },
             )()
         ),
     )
 
     assert main_module.main() == 1
-    assert FakeRuntime.instances[0].calls == ["shutdown"]
+    # Capability evidence is acquired only after registration.  The physical
+    # factory still rejects its missing readiness evidence before an SDK client
+    # can be constructed.
+    assert FakeRuntime.instances[0].calls == ["start", "shutdown"]
     assert FakeRuntime.instances[0].executors == []
 
 

@@ -12,6 +12,7 @@ from poppy_agent.agent import create_agent
 from poppy_agent.command import CommandType, HighLevelCommandProgram, StopParameters
 from poppy_agent.config import AgentConfig
 from poppy_agent.execution import (
+    CapabilityEvidencePolicy,
     ExecutionCancellationToken,
     ExecutionResult,
     ExecutionStatus,
@@ -27,11 +28,14 @@ from poppy_agent.observability import (
 )
 from poppy_agent.operational_status import RuntimeLifecycleState
 from poppy_agent.server import (
+    AgentCapabilityEvidenceResponse,
     AgentRegistrationResponse,
     AgentServerRuntime,
     AgentServerRuntimeError,
+    CapabilityEvidenceStatus,
     HeartbeatRequest,
     HeartbeatResponse,
+    RobotCapabilityEvidence,
     ServerActiveExecutionResponse,
     ServerApiError,
     ServerClient,
@@ -217,6 +221,106 @@ def test_runtime_start_logs_registration_and_recovery_state(caplog) -> None:
     assert EXECUTION_RECOVERY_CHECKED in events
     assert EXECUTION_RECOVERY_NO_ACTIVE in events
     assert RUNTIME_READY in events
+
+
+def test_physical_capability_evidence_is_not_requested_in_software_only_runtime() -> None:
+    class EvidenceServer(RecordingServer):
+        def get_capability_evidence(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("software-only runtime must not request capability evidence")
+
+    runtime = runtime_with_recording_server(EvidenceServer([]))
+    runtime.start()
+    runtime.shutdown()
+
+
+def test_physical_capability_evidence_is_requested_after_registration() -> None:
+    class EvidenceServer(RecordingServer):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.capability_calls = 0
+
+        def get_capability_evidence(
+            self, agent_id: UUID, robot_id: UUID, *, timeout_seconds: float | None = None
+        ) -> AgentCapabilityEvidenceResponse:
+            assert agent_id == AGENT_ID
+            assert robot_id == UUID(ROBOT_ID)
+            assert timeout_seconds == 1.0
+            self.capability_calls += 1
+            return AgentCapabilityEvidenceResponse(
+                robot_id=robot_id,
+                capabilities=(
+                    RobotCapabilityEvidence("COMMAND_MOVE", CapabilityEvidenceStatus.VERIFIED),
+                ),
+            )
+
+    server = EvidenceServer()
+    config = ServerConfig(
+        server_url="https://server.example.test",
+        agent_token="dummy-agent-token",
+        agent_name="agent-test",
+        agent_version="0.1.0",
+        sdk_version="not-applicable",
+        platform="test",
+    )
+    runtime = AgentServerRuntime(
+        create_agent(AgentConfig(robot_mode="mock", robot_id=ROBOT_ID)),
+        server,  # type: ignore[arg-type]
+        config,
+        physical_execution_enabled=True,
+        physical_capability_evidence_policy=CapabilityEvidencePolicy("COMMAND_MOVE", 2, 5, 1),
+    )
+
+    runtime.start()
+
+    assert server.capability_calls == 1
+    status = runtime.operational_snapshot().to_dict()["physicalReadiness"]
+    assert status["capabilityVerified"] is True
+    assert status["capabilityFresh"] is True
+    runtime.shutdown()
+
+
+def test_revoked_capability_blocks_before_execution_delivery() -> None:
+    class EvidenceServer(RecordingServer):
+        def __init__(self) -> None:
+            super().__init__([assigned_delivery()])
+            self.status = CapabilityEvidenceStatus.VERIFIED
+
+        def get_capability_evidence(
+            self, _agent_id: UUID, robot_id: UUID, *, timeout_seconds: float | None = None
+        ) -> AgentCapabilityEvidenceResponse:
+            assert timeout_seconds == 1.0
+            return AgentCapabilityEvidenceResponse(
+                robot_id=robot_id,
+                capabilities=(RobotCapabilityEvidence("COMMAND_MOVE", self.status),),
+            )
+
+    server = EvidenceServer()
+    config = ServerConfig(
+        server_url="https://server.example.test",
+        agent_token="dummy-agent-token",
+        agent_name="agent-test",
+        agent_version="0.1.0",
+        sdk_version="not-applicable",
+        platform="test",
+    )
+    runtime = AgentServerRuntime(
+        create_agent(AgentConfig(robot_mode="mock", robot_id=ROBOT_ID)),
+        server,  # type: ignore[arg-type]
+        config,
+        physical_execution_enabled=True,
+        physical_capability_evidence_policy=CapabilityEvidencePolicy("COMMAND_MOVE", 2, 5, 1),
+    )
+    runtime.start()
+    server.status = CapabilityEvidenceStatus.UNVERIFIED
+
+    with pytest.raises(AgentServerRuntimeError, match="capability evidence"):
+        runtime.execution_once(lambda _task: None)  # type: ignore[arg-type]
+
+    assert "fetch" not in server.events
+    assert (
+        runtime.operational_snapshot().to_dict()["physicalReadiness"]["capabilityVerified"] is False
+    )
+    runtime.shutdown()
 
 
 def test_recovery_failure_stops_startup_before_heartbeat_or_polling() -> None:

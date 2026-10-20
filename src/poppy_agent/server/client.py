@@ -247,13 +247,14 @@ class ServerClient:
         )
 
     def get_capability_evidence(
-        self, agent_id: UUID, robot_id: UUID
+        self, agent_id: UUID, robot_id: UUID, *, timeout_seconds: float | None = None
     ) -> AgentCapabilityEvidenceResponse:
         """Read administrator-owned evidence for this Agent's bound Robot only."""
         data = self._request_data(
             "GET",
             f"/api/v1/internal/agents/{agent_id}/robots/{robot_id}/capabilities",
             expected_status=200,
+            timeout_seconds=timeout_seconds,
         )
         response_robot_id = _uuid_field(data, "robotId")
         if response_robot_id != robot_id:
@@ -316,8 +317,11 @@ class ServerClient:
         expected_status: int,
         payload: dict[str, object] | None = None,
         params: dict[str, str] | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        response = self._request(method, path, payload=payload, params=params)
+        response = self._request(
+            method, path, payload=payload, params=params, timeout_seconds=timeout_seconds
+        )
         if response.status_code != expected_status:
             error_code = _error_code(response)
             log_event(
@@ -373,11 +377,14 @@ class ServerClient:
         *,
         payload: dict[str, object] | None,
         params: dict[str, str] | None,
+        timeout_seconds: float | None = None,
     ) -> httpx.Response:
         max_attempts = self._config.max_retries + 1
         for attempt in range(self._config.max_retries + 1):
             try:
-                return self._client.request(method, path, json=payload, params=params)
+                return self._client.request(
+                    method, path, json=payload, params=params, timeout=timeout_seconds
+                )
             except httpx.TimeoutException as exc:
                 if attempt < self._config.max_retries:
                     log_event(

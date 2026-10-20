@@ -45,6 +45,19 @@ to `{agentId}`.  The endpoint separately verifies that `{robotId}` is bound to
 that Agent.  It returns only capability code and current status.  It does not
 grant approval, expose administrator data, or add a database migration.
 
+The Agent queries this endpoint only after registration when physical execution
+has been explicitly requested. Its cache uses a monotonic TTL. A malformed,
+empty, unknown, unverified, unsupported, revoked, stale, unauthorized, or
+unreachable result never grants a command. Before execution polling, the Agent
+forces one fresh read. This is capability evidence only: it does not turn
+physical execution on and does not replace any other readiness blocker.
+
+The current runtime uses a revocation or lookup failure to block every *new*
+execution before delivery is fetched. It deliberately does **not** claim that
+it can interrupt an already-running physical motion: connecting revocation to
+an active command's one-shot `StopMove` requires the still-unimplemented v2
+physical executor and vendor-call isolation work below.
+
 `TELEMETRY` verification is independent of `COMMAND_MOVE` and `COMMAND_TURN`.
 Neither is a substitute for a reviewed motion profile, hardware validation, or
 an operator emergency procedure.
@@ -53,8 +66,6 @@ an operator emergency procedure.
 
 - approved production profile and numeric limits;
 - versioned motion DTO plus compiler, simulator, and frontend alignment;
-- local Agent capability evidence refresh/cache lifecycle before physical
-  executor creation;
 - bounded vendor-call isolation.  A Python timeout cannot forcibly terminate a
   blocking native SDK call in its worker thread;
 - hardware validation and formal emergency procedure.

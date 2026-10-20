@@ -106,6 +106,10 @@ class AgentOperationalSnapshot:
     physical_profile_name: str | None = None
     physical_profile_version: str | None = None
     motion_capability_verified: bool | None = None
+    motion_capability_code: str | None = None
+    motion_capability_checked_at: datetime | None = None
+    motion_capability_fresh: bool | None = None
+    motion_capability_failure: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable camelCase JSON representation."""
@@ -139,6 +143,10 @@ class AgentOperationalSnapshot:
                 "telemetryFresh": None,
                 "batterySufficient": None,
                 "capabilityVerified": self.motion_capability_verified,
+                "capabilityCode": self.motion_capability_code,
+                "capabilityCheckedAt": _datetime_value(self.motion_capability_checked_at),
+                "capabilityFresh": self.motion_capability_fresh,
+                "capabilityFailure": self.motion_capability_failure,
                 "robotIdentityMatched": None,
                 "serverReachable": self.connectivity_state is RuntimeConnectivityState.CONNECTED,
             },
@@ -172,6 +180,29 @@ class OperationalStatusTracker:
         self._physical_execution_enabled = physical_execution_enabled
         self._physical_profile_name = physical_profile_name
         self._physical_profile_version = physical_profile_version
+        self._motion_capability_verified: bool | None = None
+        self._motion_capability_code: str | None = None
+        self._motion_capability_checked_at: datetime | None = None
+        self._motion_capability_fresh: bool | None = None
+        self._motion_capability_failure: str | None = None
+
+    def set_motion_capability_evidence(
+        self,
+        *,
+        code: str,
+        verified: bool,
+        checked_at: datetime | None,
+        fresh: bool,
+        failure: str,
+    ) -> None:
+        if type(verified) is not bool or type(fresh) is not bool:
+            raise TypeError("capability evidence booleans must be bool")
+        with self._lock:
+            self._motion_capability_code = code
+            self._motion_capability_verified = verified
+            self._motion_capability_checked_at = checked_at
+            self._motion_capability_fresh = fresh
+            self._motion_capability_failure = failure
 
     def mark_registered(self, agent_id: UUID, robot_id: UUID, *, at: datetime) -> None:
         with self._lock:
@@ -231,6 +262,11 @@ class OperationalStatusTracker:
             physical_execution_enabled = self._physical_execution_enabled
             physical_profile_name = self._physical_profile_name
             physical_profile_version = self._physical_profile_version
+            motion_capability_verified = self._motion_capability_verified
+            motion_capability_code = self._motion_capability_code
+            motion_capability_checked_at = self._motion_capability_checked_at
+            motion_capability_fresh = self._motion_capability_fresh
+            motion_capability_failure = self._motion_capability_failure
 
         reasons: list[OperationalReadinessReason] = []
         if not registered:
@@ -271,6 +307,11 @@ class OperationalStatusTracker:
             physical_execution_enabled=physical_execution_enabled,
             physical_profile_name=physical_profile_name,
             physical_profile_version=physical_profile_version,
+            motion_capability_verified=motion_capability_verified,
+            motion_capability_code=motion_capability_code,
+            motion_capability_checked_at=motion_capability_checked_at,
+            motion_capability_fresh=motion_capability_fresh,
+            motion_capability_failure=motion_capability_failure,
         )
 
 

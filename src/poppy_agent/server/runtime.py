@@ -15,6 +15,9 @@ from uuid import UUID
 from poppy_agent.agent import Agent, AgentSnapshot
 from poppy_agent.command import CommandProtocolParseError, HighLevelCommandProtocolParser
 from poppy_agent.execution import (
+    CapabilityEvidenceCache,
+    CapabilityEvidenceClient,
+    CapabilityEvidencePolicy,
     ExecutionCancellationToken,
     ExecutionExecutor,
     ExecutionResult,
@@ -101,6 +104,7 @@ class AgentServerRuntime:
         physical_execution_enabled: bool = False,
         physical_profile_name: str | None = None,
         physical_profile_version: str | None = None,
+        physical_capability_evidence_policy: CapabilityEvidencePolicy | None = None,
     ) -> None:
         self.agent = agent
         self.server = server
@@ -109,6 +113,12 @@ class AgentServerRuntime:
         self.active_execution_id: UUID | None = None
         self.connectivity_state = RuntimeConnectivityState.CONNECTED
         self._reconnect_delay_seconds = config.reconnect_initial_delay_seconds
+        self._physical_capability_cache = (
+            CapabilityEvidenceCache(physical_capability_evidence_policy)
+            if physical_execution_enabled and physical_capability_evidence_policy is not None
+            else None
+        )
+        self._physical_capability_checked_at: datetime | None = None
         self._operational_status = OperationalStatusTracker(
             physical_execution_enabled=physical_execution_enabled,
             physical_profile_name=physical_profile_name,
@@ -175,6 +185,7 @@ class AgentServerRuntime:
             self.agent.shutdown()
             raise
         self._operational_status.mark_recovery_complete()
+        self._refresh_physical_capability_evidence(force=True)
         self._operational_status.set_lifecycle(RuntimeLifecycleState.READY)
         self._publish_status()
         log_event(logger, logging.INFO, RUNTIME_READY, agent_id=response.agent_id)
@@ -292,11 +303,13 @@ class AgentServerRuntime:
 
         response = self.server.send_heartbeat(self.agent_id, request)
         self._record_server_success(heartbeat=True)
+        self._refresh_physical_capability_evidence()
         return response
 
     def execution_once(self, executor: ExecutionExecutor) -> ExecutionResult | None:
         """Poll, execute, and report one assigned execution without robot commands."""
         self._set_execution_polling_enabled(True)
+        self._require_fresh_physical_capability_evidence()
         task = self._poll_and_mark_running()
         if task is None:
             return None
@@ -334,6 +347,7 @@ class AgentServerRuntime:
         next_heartbeat = monotonic()
         next_execution_poll = next_heartbeat
         next_reconnect = next_heartbeat
+        next_capability_refresh = next_heartbeat
         future: Future[ExecutionResult] | None = None
         task: ExecutionTask | None = None
         cancellation_token: ExecutionCancellationToken | None = None
@@ -344,6 +358,17 @@ class AgentServerRuntime:
         try:
             while not stop_event.is_set():
                 now = monotonic()
+                if now >= next_capability_refresh:
+                    self._refresh_physical_capability_evidence()
+                    policy = (
+                        self._physical_capability_cache.policy
+                        if self._physical_capability_cache is not None
+                        else None
+                    )
+                    if policy is not None:
+                        next_capability_refresh = now + policy.refresh_interval_seconds
+                    else:
+                        next_capability_refresh = float("inf")
                 if self.connectivity_state is RuntimeConnectivityState.DEGRADED:
                     if now >= next_reconnect:
                         try:
@@ -506,6 +531,7 @@ class AgentServerRuntime:
                     wait_seconds = min(
                         max(0.0, next_heartbeat - monotonic()),
                         max(0.0, next_execution_poll - monotonic()),
+                        max(0.0, next_capability_refresh - monotonic()),
                     )
                 if stop_event.wait(wait_seconds):
                     return
@@ -522,6 +548,7 @@ class AgentServerRuntime:
             raise AgentServerRuntimeError("Agent must be registered before execution")
         if self.active_execution_id is not None:
             raise AgentServerRuntimeError("An execution is already active")
+        self._require_fresh_physical_capability_evidence()
         snapshot = self.agent.read_state()
         robot_id = _robot_uuid(snapshot)
         delivery = self.server.fetch_next_execution(self.agent_id, robot_id)
@@ -957,6 +984,50 @@ class AgentServerRuntime:
                 ),
             ),
         )
+
+    def _refresh_physical_capability_evidence(self, *, force: bool = False) -> None:
+        cache = self._physical_capability_cache
+        if cache is None or self.agent_id is None:
+            return
+        robot_id = _robot_uuid(self.agent.read_state())
+        if not force and not cache.due(robot_id):
+            self._publish_capability_status(robot_id)
+            return
+        snapshot = cache.refresh(
+            cast(CapabilityEvidenceClient, self.server), self.agent_id, robot_id
+        )
+        if snapshot.checked_monotonic is not None:
+            self._physical_capability_checked_at = datetime.now(UTC)
+        else:
+            self._physical_capability_checked_at = None
+        self._publish_capability_status(robot_id)
+
+    def _require_fresh_physical_capability_evidence(self) -> None:
+        cache = self._physical_capability_cache
+        if cache is None:
+            return
+        if self.agent_id is None:
+            raise AgentServerRuntimeError("Agent must be registered before capability validation")
+        robot_id = _robot_uuid(self.agent.read_state())
+        self._refresh_physical_capability_evidence(force=True)
+        if not cache.ready(robot_id):
+            raise AgentServerRuntimeError(
+                "physical command capability evidence is not fresh and verified"
+            )
+
+    def _publish_capability_status(self, robot_id: UUID) -> None:
+        cache = self._physical_capability_cache
+        if cache is None:
+            return
+        snapshot = cache.snapshot(robot_id)
+        self._operational_status.set_motion_capability_evidence(
+            code=snapshot.required_code,
+            verified=snapshot.verified,
+            checked_at=self._physical_capability_checked_at,
+            fresh=snapshot.fresh(now=monotonic(), ttl_seconds=cache.policy.ttl_seconds),
+            failure=snapshot.failure.value,
+        )
+        self._publish_status()
 
     def _record_server_success(self, *, heartbeat: bool = False) -> None:
         self._operational_status.mark_server_success(heartbeat=heartbeat, at=datetime.now(UTC))

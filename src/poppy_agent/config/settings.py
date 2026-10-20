@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from math import isfinite
 
 from poppy_agent.command import CommandType
-from poppy_agent.execution import PhysicalMotionPolicy
+from poppy_agent.execution import CapabilityEvidencePolicy, PhysicalMotionPolicy
 
 
 class ConfigurationError(ValueError):
@@ -32,6 +32,7 @@ class AgentConfig:
     physical_motion_profile_version: str | None = None
     physical_motion_policy: PhysicalMotionPolicy | None = None
     physical_minimum_battery_percent: int | None = None
+    physical_capability_evidence_policy: CapabilityEvidencePolicy | None = None
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> AgentConfig:
@@ -78,6 +79,7 @@ class AgentConfig:
         physical_profile_version: str | None = None
         physical_motion_policy: PhysicalMotionPolicy | None = None
         physical_minimum_battery_percent: int | None = None
+        physical_capability_evidence_policy: CapabilityEvidencePolicy | None = None
         if physical_execution_enabled:
             physical_profile_name = _required(values, "POPPY_PHYSICAL_MOTION_PROFILE_NAME")
             physical_profile_version = _required(values, "POPPY_PHYSICAL_MOTION_PROFILE_VERSION")
@@ -111,6 +113,26 @@ class AgentConfig:
                 _required(values, "POPPY_PHYSICAL_MIN_BATTERY_PERCENT"),
                 "POPPY_PHYSICAL_MIN_BATTERY_PERCENT",
             )
+            try:
+                physical_capability_evidence_policy = CapabilityEvidencePolicy(
+                    required_code=_required(
+                        values, "POPPY_PHYSICAL_REQUIRED_CAPABILITY_CODE"
+                    ).upper(),
+                    refresh_interval_seconds=_parse_positive_finite_float(
+                        _required(values, "POPPY_PHYSICAL_CAPABILITY_REFRESH_INTERVAL_SECONDS"),
+                        "POPPY_PHYSICAL_CAPABILITY_REFRESH_INTERVAL_SECONDS",
+                    ),
+                    ttl_seconds=_parse_positive_finite_float(
+                        _required(values, "POPPY_PHYSICAL_CAPABILITY_TTL_SECONDS"),
+                        "POPPY_PHYSICAL_CAPABILITY_TTL_SECONDS",
+                    ),
+                    request_timeout_seconds=_parse_positive_finite_float(
+                        _required(values, "POPPY_PHYSICAL_CAPABILITY_REQUEST_TIMEOUT_SECONDS"),
+                        "POPPY_PHYSICAL_CAPABILITY_REQUEST_TIMEOUT_SECONDS",
+                    ),
+                )
+            except ValueError as exc:
+                raise ConfigurationError(str(exc)) from exc
 
         return cls(
             robot_mode=robot_mode,
@@ -126,6 +148,7 @@ class AgentConfig:
             physical_motion_profile_version=physical_profile_version,
             physical_motion_policy=physical_motion_policy,
             physical_minimum_battery_percent=physical_minimum_battery_percent,
+            physical_capability_evidence_policy=physical_capability_evidence_policy,
         )
 
 
