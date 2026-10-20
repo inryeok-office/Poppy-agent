@@ -7,6 +7,7 @@ import pytest
 
 from poppy_agent.server import (
     AgentRegistrationRequest,
+    CapabilityEvidenceStatus,
     HeartbeatRequest,
     HeartbeatRobotRequest,
     RobotRegistrationRequest,
@@ -135,6 +136,54 @@ def test_register_preserves_bootstrap_token_for_legacy_server_response() -> None
     client.close()
 
     assert response.agent_token is None
+
+
+def test_capability_evidence_is_scoped_to_the_requested_robot() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == (
+            f"/api/v1/internal/agents/{AGENT_ID}/robots/{ROBOT_ID}/capabilities"
+        )
+        assert request.headers["X-Agent-Token"] == "dummy-agent-token"
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "robotId": str(ROBOT_ID),
+                    "capabilities": [
+                        {"code": "COMMAND_MOVE", "status": "VERIFIED"},
+                        {"code": "TELEMETRY", "status": "UNVERIFIED"},
+                    ],
+                },
+                "error": None,
+            },
+        )
+
+    client = client_for(handler)
+    evidence = client.get_capability_evidence(AGENT_ID, ROBOT_ID)
+    client.close()
+
+    assert evidence.verified("COMMAND_MOVE")
+    assert not evidence.verified("COMMAND_TURN")
+    assert evidence.capabilities[0].status is CapabilityEvidenceStatus.VERIFIED
+
+
+def test_capability_evidence_rejects_a_mismatched_robot() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {"robotId": str(AGENT_ID), "capabilities": []},
+                "error": None,
+            },
+        )
+
+    client = client_for(handler)
+    with pytest.raises(ServerResponseError, match="capability robot"):
+        client.get_capability_evidence(AGENT_ID, ROBOT_ID)
+    client.close()
 
 
 def test_heartbeat_preserves_nullable_and_omitted_execution_fields() -> None:

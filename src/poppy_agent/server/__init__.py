@@ -9,11 +9,14 @@ from poppy_agent.server.client import (
 )
 from poppy_agent.server.config import ServerConfig, ServerConfigurationError
 from poppy_agent.server.models import (
+    AgentCapabilityEvidenceResponse,
     AgentRegistrationRequest,
     AgentRegistrationResponse,
+    CapabilityEvidenceStatus,
     HeartbeatRequest,
     HeartbeatResponse,
     HeartbeatRobotRequest,
+    RobotCapabilityEvidence,
     RobotRegistrationRequest,
     ServerActiveExecutionResponse,
     ServerExecutionLifecycleStatus,
@@ -33,6 +36,8 @@ from poppy_agent.server.runtime import (
 __all__ = [
     "AgentRegistrationRequest",
     "AgentRegistrationResponse",
+    "AgentCapabilityEvidenceResponse",
+    "CapabilityEvidenceStatus",
     "AgentServerRuntime",
     "AgentServerRuntimeError",
     "RuntimeConnectivityState",
@@ -41,6 +46,7 @@ __all__ = [
     "HeartbeatResponse",
     "HeartbeatRobotRequest",
     "RobotRegistrationRequest",
+    "RobotCapabilityEvidence",
     "ServerApiError",
     "ServerClient",
     "ServerClientError",

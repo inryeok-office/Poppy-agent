@@ -24,6 +24,7 @@ class PhysicalReadinessBlocker(StrEnum):
     OBSERVABILITY_REQUIREMENTS_UNMET = "OBSERVABILITY_REQUIREMENTS_UNMET"
     EQUIPMENT_OWNER_APPROVAL_MISSING = "EQUIPMENT_OWNER_APPROVAL_MISSING"
     HARDWARE_VALIDATION_NOT_COMPLETED = "HARDWARE_VALIDATION_NOT_COMPLETED"
+    MOTION_CAPABILITY_UNVERIFIED = "MOTION_CAPABILITY_UNVERIFIED"
 
 
 class PhysicalCommandClientKind(StrEnum):
@@ -52,6 +53,7 @@ class PhysicalReadinessEvidence:
     observability_requirements_met: bool = False
     equipment_owner_approved: bool = False
     hardware_validation_completed: bool = False
+    motion_capability_verified: bool = False
 
     def __post_init__(self) -> None:
         for field in fields(self):
@@ -123,6 +125,8 @@ class PhysicalReadinessEvaluator:
             blockers.append(PhysicalReadinessBlocker.EQUIPMENT_OWNER_APPROVAL_MISSING)
         if not evidence.hardware_validation_completed:
             blockers.append(PhysicalReadinessBlocker.HARDWARE_VALIDATION_NOT_COMPLETED)
+        if not evidence.motion_capability_verified:
+            blockers.append(PhysicalReadinessBlocker.MOTION_CAPABILITY_UNVERIFIED)
         return PhysicalExecutionReadiness(ready=not blockers, blocking_reasons=tuple(blockers))
 
 

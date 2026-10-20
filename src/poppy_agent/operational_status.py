@@ -105,12 +105,13 @@ class AgentOperationalSnapshot:
     physical_execution_enabled: bool = False
     physical_profile_name: str | None = None
     physical_profile_version: str | None = None
+    motion_capability_verified: bool | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable camelCase JSON representation."""
 
         readiness = PhysicalExecutionGate().evaluate(
-            physical_execution_enabled=self.physical_execution_enabled
+            physical_execution_enabled=self.physical_execution_enabled,
         )
         return {
             "schemaVersion": self.schema_version,
@@ -137,7 +138,7 @@ class AgentOperationalSnapshot:
                 "profileVersion": self.physical_profile_version,
                 "telemetryFresh": None,
                 "batterySufficient": None,
-                "capabilityVerified": None,
+                "capabilityVerified": self.motion_capability_verified,
                 "robotIdentityMatched": None,
                 "serverReachable": self.connectivity_state is RuntimeConnectivityState.CONNECTED,
             },

@@ -116,6 +116,38 @@ class HeartbeatResponse:
     accepted_at: datetime
 
 
+class CapabilityEvidenceStatus(StrEnum):
+    """Administrator-owned support state returned for one bound Robot."""
+
+    VERIFIED = "VERIFIED"
+    UNVERIFIED = "UNVERIFIED"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
+@dataclass(frozen=True, slots=True)
+class RobotCapabilityEvidence:
+    """One safe capability evidence item; it never contains credentials."""
+
+    code: str
+    status: CapabilityEvidenceStatus
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCapabilityEvidenceResponse:
+    """Read-only capability evidence for exactly one Agent-bound Robot."""
+
+    robot_id: UUID
+    capabilities: tuple[RobotCapabilityEvidence, ...]
+
+    def verified(self, code: str) -> bool:
+        normalized = code.strip().upper()
+        return any(
+            capability.code.strip().upper() == normalized
+            and capability.status is CapabilityEvidenceStatus.VERIFIED
+            for capability in self.capabilities
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ServerExecutionDelivery:
     """Execution delivery data returned by the server polling endpoint."""

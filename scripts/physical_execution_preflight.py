@@ -209,6 +209,7 @@ def synthetic_test_evidence() -> PhysicalReadinessEvidence:
         observability_requirements_met=True,
         equipment_owner_approved=True,
         hardware_validation_completed=True,
+        motion_capability_verified=True,
     )
 
 

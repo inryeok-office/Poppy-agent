@@ -20,10 +20,13 @@ from poppy_agent.observability import (
 )
 from poppy_agent.server.config import ServerConfig
 from poppy_agent.server.models import (
+    AgentCapabilityEvidenceResponse,
     AgentRegistrationRequest,
     AgentRegistrationResponse,
+    CapabilityEvidenceStatus,
     HeartbeatRequest,
     HeartbeatResponse,
+    RobotCapabilityEvidence,
     ServerActiveExecutionResponse,
     ServerExecutionDelivery,
     ServerExecutionLifecycleStatus,
@@ -242,6 +245,38 @@ class ServerClient:
         return ServerActiveExecutionResponse(
             response_execution_id, response_robot_id, response_status
         )
+
+    def get_capability_evidence(
+        self, agent_id: UUID, robot_id: UUID
+    ) -> AgentCapabilityEvidenceResponse:
+        """Read administrator-owned evidence for this Agent's bound Robot only."""
+        data = self._request_data(
+            "GET",
+            f"/api/v1/internal/agents/{agent_id}/robots/{robot_id}/capabilities",
+            expected_status=200,
+        )
+        response_robot_id = _uuid_field(data, "robotId")
+        if response_robot_id != robot_id:
+            raise ServerResponseError("Poppy-Server capability robot does not match request")
+        raw_capabilities = data.get("capabilities")
+        if not isinstance(raw_capabilities, list):
+            raise ServerResponseError("Poppy-Server capability response is malformed")
+        capabilities: list[RobotCapabilityEvidence] = []
+        for item in raw_capabilities:
+            if not isinstance(item, dict):
+                raise ServerResponseError("Poppy-Server capability response is malformed")
+            code = item.get("code")
+            if not isinstance(code, str) or not code.strip():
+                raise ServerResponseError("Poppy-Server capability response is malformed")
+            raw_status = item.get("status")
+            if not isinstance(raw_status, str):
+                raise ServerResponseError("Poppy-Server capability response is malformed")
+            try:
+                status = CapabilityEvidenceStatus(raw_status)
+            except ValueError as exc:
+                raise ServerResponseError("Poppy-Server capability response is malformed") from exc
+            capabilities.append(RobotCapabilityEvidence(code=code, status=status))
+        return AgentCapabilityEvidenceResponse(response_robot_id, tuple(capabilities))
 
     def recover_active_execution(
         self, agent_id: UUID, robot_id: UUID

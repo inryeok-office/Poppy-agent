@@ -28,6 +28,7 @@ def test_default_readiness_is_blocked_with_deterministic_reasons() -> None:
         PhysicalReadinessBlocker.OBSERVABILITY_REQUIREMENTS_UNMET,
         PhysicalReadinessBlocker.EQUIPMENT_OWNER_APPROVAL_MISSING,
         PhysicalReadinessBlocker.HARDWARE_VALIDATION_NOT_COMPLETED,
+        PhysicalReadinessBlocker.MOTION_CAPABILITY_UNVERIFIED,
     )
 
 
@@ -84,6 +85,7 @@ def test_complete_synthetic_evidence_can_be_evaluated_without_sdk_or_robot() -> 
         observability_requirements_met=True,
         equipment_owner_approved=True,
         hardware_validation_completed=True,
+        motion_capability_verified=True,
     )
 
     readiness = PhysicalExecutionGate().evaluate(
