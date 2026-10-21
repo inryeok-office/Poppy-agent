@@ -10,6 +10,8 @@ from time import monotonic
 from typing import Protocol
 from uuid import UUID
 
+from poppy_agent.command import CommandType, HighLevelCommand
+
 
 class CapabilityEvidenceFailure(StrEnum):
     """Secret-free classes for a failed evidence lookup."""
@@ -35,17 +37,38 @@ class CapabilityEvidenceResponse(Protocol):
 
     def verified(self, code: str) -> bool: ...
 
+    def verified_codes(self) -> frozenset[str]: ...
+
+
+# This deliberately mirrors Poppy-Server RequiredCapabilitiesResolver. It is
+# code-owned rather than environment-configurable so a deployment cannot grant
+# TURN authority merely by naming COMMAND_MOVE in configuration.
+COMMAND_CAPABILITY_CODES: dict[CommandType, str | None] = {
+    CommandType.WAIT: None,
+    CommandType.MOVE: "COMMAND_MOVE",
+    CommandType.TURN: "COMMAND_TURN",
+    CommandType.STOP: "COMMAND_STOP",
+    CommandType.POSTURE: "COMMAND_POSTURE",
+    CommandType.PRESET: "COMMAND_PRESET",
+}
+
+
+def required_capability_codes(commands: tuple[HighLevelCommand, ...]) -> frozenset[str]:
+    """Resolve the complete trusted capability set for one execution program."""
+    return frozenset(
+        code
+        for command in commands
+        if (code := COMMAND_CAPABILITY_CODES.get(command.type)) is not None
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class CapabilityEvidencePolicy:
-    required_code: str
     refresh_interval_seconds: float
     ttl_seconds: float
     request_timeout_seconds: float
 
     def __post_init__(self) -> None:
-        if not self.required_code.strip():
-            raise ValueError("required capability code must not be blank")
         for name, value in (
             ("refresh interval", self.refresh_interval_seconds),
             ("TTL", self.ttl_seconds),
@@ -60,8 +83,7 @@ class CapabilityEvidencePolicy:
 @dataclass(frozen=True, slots=True)
 class CapabilityEvidenceSnapshot:
     robot_id: UUID
-    required_code: str
-    verified: bool
+    verified_codes: frozenset[str]
     checked_monotonic: float | None
     failure: CapabilityEvidenceFailure
 
@@ -70,6 +92,11 @@ class CapabilityEvidenceSnapshot:
             self.failure is CapabilityEvidenceFailure.NONE
             and self.checked_monotonic is not None
             and now - self.checked_monotonic <= ttl_seconds
+        )
+
+    def permits(self, required_codes: frozenset[str], *, now: float, ttl_seconds: float) -> bool:
+        return (
+            self.fresh(now=now, ttl_seconds=ttl_seconds) and required_codes <= self.verified_codes
         )
 
 
@@ -93,17 +120,25 @@ class CapabilityEvidenceCache:
         if self._snapshot is None or self._snapshot.robot_id != robot_id:
             return CapabilityEvidenceSnapshot(
                 robot_id=robot_id,
-                required_code=self.policy.required_code,
-                verified=False,
+                verified_codes=frozenset(),
                 checked_monotonic=None,
                 failure=CapabilityEvidenceFailure.NONE,
             )
         return self._snapshot
 
     def ready(self, robot_id: UUID) -> bool:
+        """Compatibility summary: any verified evidence, never command authority."""
         snapshot = self.snapshot(robot_id)
-        return snapshot.verified and snapshot.fresh(
+        return bool(snapshot.verified_codes) and snapshot.fresh(
             now=self._clock(), ttl_seconds=self.policy.ttl_seconds
+        )
+
+    def permits(self, robot_id: UUID, required_codes: frozenset[str]) -> bool:
+        """Require every capability needed by the parsed program."""
+        return self.snapshot(robot_id).permits(
+            required_codes,
+            now=self._clock(),
+            ttl_seconds=self.policy.ttl_seconds,
         )
 
     def due(self, robot_id: UUID) -> bool:
@@ -122,8 +157,7 @@ class CapabilityEvidenceCache:
         except Exception as exc:
             self._snapshot = CapabilityEvidenceSnapshot(
                 robot_id=robot_id,
-                required_code=self.policy.required_code,
-                verified=False,
+                verified_codes=frozenset(),
                 checked_monotonic=self._clock(),
                 failure=_failure_category(exc),
             )
@@ -131,16 +165,15 @@ class CapabilityEvidenceCache:
         if evidence.robot_id != robot_id:
             self._snapshot = CapabilityEvidenceSnapshot(
                 robot_id=robot_id,
-                required_code=self.policy.required_code,
-                verified=False,
+                verified_codes=frozenset(),
                 checked_monotonic=self._clock(),
                 failure=CapabilityEvidenceFailure.IDENTITY_MISMATCH,
             )
             return self._snapshot
+        verified_codes = evidence.verified_codes()
         self._snapshot = CapabilityEvidenceSnapshot(
             robot_id=robot_id,
-            required_code=self.policy.required_code,
-            verified=evidence.verified(self.policy.required_code),
+            verified_codes=verified_codes,
             checked_monotonic=self._clock(),
             failure=CapabilityEvidenceFailure.NONE,
         )
@@ -169,4 +202,6 @@ __all__ = [
     "CapabilityEvidenceFailure",
     "CapabilityEvidencePolicy",
     "CapabilityEvidenceSnapshot",
+    "COMMAND_CAPABILITY_CODES",
+    "required_capability_codes",
 ]

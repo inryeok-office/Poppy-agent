@@ -139,7 +139,7 @@ class ServerClient:
         if status != "ASSIGNED":
             raise ServerResponseError("Poppy-Server execution status is unsupported")
         protocol_version = _int_field(execution, "protocolVersion")
-        if protocol_version != 1:
+        if protocol_version not in {1, 2}:
             raise ServerResponseError("Poppy-Server execution protocol version is unsupported")
         delivery_robot_id = _uuid_field(execution, "robotId")
         if delivery_robot_id != robot_id:

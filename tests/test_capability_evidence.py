@@ -2,10 +2,19 @@ from uuid import UUID
 
 import pytest
 
+from poppy_agent.command import (
+    CommandType,
+    HighLevelCommand,
+    MoveDirection,
+    MoveParameters,
+    TurnDirection,
+    TurnParameters,
+)
 from poppy_agent.execution import (
     CapabilityEvidenceCache,
     CapabilityEvidenceFailure,
     CapabilityEvidencePolicy,
+    required_capability_codes,
 )
 from poppy_agent.server import (
     AgentCapabilityEvidenceResponse,
@@ -45,13 +54,13 @@ class EvidenceServer:
 
 
 def policy() -> CapabilityEvidencePolicy:
-    return CapabilityEvidencePolicy("COMMAND_MOVE", 2.0, 5.0, 1.0)
+    return CapabilityEvidencePolicy(2.0, 5.0, 1.0)
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), True])
 def test_policy_rejects_non_finite_or_boolean_timing(value: float | bool) -> None:
     with pytest.raises(ValueError, match="positive finite"):
-        CapabilityEvidencePolicy("COMMAND_MOVE", value, 5.0, 1.0)
+        CapabilityEvidencePolicy(value, 5.0, 1.0)
 
 
 def response(status: CapabilityEvidenceStatus = CapabilityEvidenceStatus.VERIFIED):
@@ -83,6 +92,20 @@ def test_unverified_and_unknown_capabilities_never_grant_access() -> None:
 
     cache.refresh(EvidenceServer(response(CapabilityEvidenceStatus.UNVERIFIED)), AGENT_ID, ROBOT_ID)
     assert not cache.ready(ROBOT_ID)
+
+
+def test_command_capability_mapping_requires_each_motion_capability() -> None:
+    clock = Clock()
+    cache = CapabilityEvidenceCache(policy(), clock=clock)
+    cache.refresh(EvidenceServer(response()), AGENT_ID, ROBOT_ID)
+
+    move = HighLevelCommand(0, "move", CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 0.1))
+    turn = HighLevelCommand(1, "turn", CommandType.TURN, TurnParameters(TurnDirection.LEFT, 1.0))
+
+    assert required_capability_codes((move,)) == frozenset({"COMMAND_MOVE"})
+    assert required_capability_codes((turn,)) == frozenset({"COMMAND_TURN"})
+    assert cache.permits(ROBOT_ID, required_capability_codes((move,)))
+    assert not cache.permits(ROBOT_ID, required_capability_codes((turn,)))
     cache.refresh(EvidenceServer(AgentCapabilityEvidenceResponse(ROBOT_ID, ())), AGENT_ID, ROBOT_ID)
     assert not cache.ready(ROBOT_ID)
 

@@ -147,6 +147,14 @@ class AgentCapabilityEvidenceResponse:
             for capability in self.capabilities
         )
 
+    def verified_codes(self) -> frozenset[str]:
+        """Return normalized administrator-verified capability codes only."""
+        return frozenset(
+            capability.code.strip().upper()
+            for capability in self.capabilities
+            if capability.status is CapabilityEvidenceStatus.VERIFIED
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ServerExecutionDelivery:

@@ -403,7 +403,7 @@ def test_fetch_next_execution_returns_none_when_no_work_is_available() -> None:
                 "executionId": str(AGENT_ID),
                 "robotId": str(ROBOT_ID),
                 "status": "ASSIGNED",
-                "protocolVersion": 2,
+                "protocolVersion": 3,
             },
             "protocol version",
         ),

@@ -14,6 +14,8 @@ from poppy_agent.command import (
     StopParameters,
     TurnDirection,
     TurnParameters,
+    VelocityMoveParameters,
+    VelocityTurnParameters,
     WaitParameters,
 )
 from poppy_agent.execution import (
@@ -55,11 +57,21 @@ def command(
 
 
 def task(*commands: HighLevelCommand) -> ExecutionTask:
+    protocol_version = (
+        2
+        if any(
+            isinstance(command.parameters, (VelocityMoveParameters, VelocityTurnParameters))
+            for command in commands
+        )
+        else 1
+    )
     return ExecutionTask(
         execution_id=EXECUTION_ID,
         robot_id=ROBOT_ID,
-        protocol_version=1,
-        command_program=HighLevelCommandProgram(protocol_version=1, commands=commands),
+        protocol_version=protocol_version,
+        command_program=HighLevelCommandProgram(
+            protocol_version=protocol_version, commands=commands
+        ),
     )
 
 
@@ -142,12 +154,12 @@ def test_motion_strategy_dispatches_plans_and_records_durations_in_fake_client()
             command(
                 0,
                 CommandType.MOVE,
-                MoveParameters(MoveDirection.FORWARD, 0.2),
+                VelocityMoveParameters(0.1, 2.0),
             ),
             command(
                 1,
                 CommandType.TURN,
-                TurnParameters(TurnDirection.RIGHT, 10.0),
+                VelocityTurnParameters(-10.0, 1.0),
             ),
             command(2, CommandType.STOP, StopParameters()),
         )
@@ -161,8 +173,8 @@ def test_motion_strategy_dispatches_plans_and_records_durations_in_fake_client()
     assert client.calls[0].parameters.direction is MoveDirection.FORWARD
     assert client.calls[0].parameters.duration_seconds == 2.0  # type: ignore[union-attr]
     assert client.calls[1].parameters.direction is TurnDirection.RIGHT
-    assert client.calls[1].parameters.duration_seconds == (10.0 / 15.0)  # type: ignore[union-attr]
-    assert sleeper.durations == [2.0, (10.0 / 15.0)]
+    assert client.calls[1].parameters.duration_seconds == 1.0  # type: ignore[union-attr]
+    assert sleeper.durations == [2.0, 1.0]
 
 
 def test_invalid_motion_plan_is_rejected_before_previous_command_dispatch() -> None:
@@ -212,7 +224,7 @@ def test_motion_client_failure_propagates_without_sleeping() -> None:
         target,
         safety_policy=CommandSafetyPolicy(),
         bound_robot_id=ROBOT_ID,
-    ).execute(task(command(0, CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 0.2))))
+    ).execute(task(command(0, CommandType.MOVE, VelocityMoveParameters(0.1, 2.0))))
 
     assert result.status is ExecutionStatus.FAILED
     assert result.failure_reason == (
@@ -248,7 +260,7 @@ def test_motion_cancellation_remains_cancelled_through_hardware_target() -> None
         target,
         safety_policy=CommandSafetyPolicy(),
         bound_robot_id=ROBOT_ID,
-    ).execute(task(command(0, CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 0.2))))
+    ).execute(task(command(0, CommandType.MOVE, VelocityMoveParameters(0.1, 2.0))))
 
     assert result.status is ExecutionStatus.CANCELLED
     assert [call.operation for call in client.calls] == [
@@ -279,7 +291,7 @@ def test_stop_move_failure_is_preserved_with_primary_motion_failure() -> None:
         target,
         safety_policy=CommandSafetyPolicy(),
         bound_robot_id=ROBOT_ID,
-    ).execute(task(command(0, CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 0.2))))
+    ).execute(task(command(0, CommandType.MOVE, VelocityMoveParameters(0.1, 2.0))))
 
     assert result.status is ExecutionStatus.FAILED
     assert result.failure_reason == (

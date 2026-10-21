@@ -15,6 +15,8 @@ from poppy_agent.command import (
     PostureParameters,
     TurnDirection,
     TurnParameters,
+    VelocityMoveParameters,
+    VelocityTurnParameters,
     serialize_command_program,
 )
 
@@ -35,6 +37,22 @@ def test_empty_command_program_is_valid() -> None:
     program = HighLevelCommandProtocolParser().parse('{"protocolVersion":1,"commands":[]}')
 
     assert program.commands == ()
+
+
+def test_v2_velocity_program_parses_and_round_trips() -> None:
+    document = (
+        '{"protocolVersion":2,"commands":[{"sequence":0,"sourceBlockId":"move",'
+        '"type":"MOVE","parameters":{"linearVelocityMetersPerSecond":-0.1,'
+        '"durationSeconds":0.5}},{"sequence":1,"sourceBlockId":"turn",'
+        '"type":"TURN","parameters":{"angularVelocityDegreesPerSecond":15,'
+        '"durationSeconds":0.5}}]}'
+    )
+    parser = HighLevelCommandProtocolParser()
+    program = parser.parse(document)
+
+    assert isinstance(program.commands[0].parameters, VelocityMoveParameters)
+    assert isinstance(program.commands[1].parameters, VelocityTurnParameters)
+    assert json.loads(serialize_command_program(program)) == json.loads(document)
 
 
 def test_round_trip_preserves_typed_program() -> None:
@@ -75,7 +93,7 @@ def _program_with_command(command_type: str, parameters: object) -> HighLevelCom
     "document",
     [
         "not-json",
-        '{"protocolVersion":2,"commands":[]}',
+        '{"protocolVersion":3,"commands":[]}',
         '{"protocolVersion":true,"commands":[]}',
         '{"protocolVersion":1,"commands":{}}',
         '{"protocolVersion":1,"commands":[],"extra":true}',

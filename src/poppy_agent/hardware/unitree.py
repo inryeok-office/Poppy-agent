@@ -11,7 +11,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from poppy_agent.command import CommandType, Posture, PostureParameters
+from poppy_agent.command import (
+    CommandType,
+    MoveParameters,
+    Posture,
+    PostureParameters,
+    TurnParameters,
+)
 from poppy_agent.execution.cancellation import ExecutionCancellationToken
 from poppy_agent.execution.motion import MotionExecutionStrategy, MotionPlan, MotionSleeper
 from poppy_agent.execution.physical_safety import PhysicalMotionPolicy
@@ -176,6 +182,10 @@ class UnitreeCommandBackend(HardwareCommandPort):
     def preflight(self, intent: HardwareCommandIntent) -> None:
         """Plan motion commands before the executor dispatches any command."""
         if intent.type in {CommandType.MOVE, CommandType.TURN}:
+            if isinstance(intent.parameters, (MoveParameters, TurnParameters)):
+                raise UnitreeCommandBackendError(
+                    "protocol v1 distance/angle motion is not mapped to Unitree velocity"
+                )
             if not self.supports(intent.type):
                 raise UnitreeCommandBackendError(
                     f"Unitree command mapping is unsupported for {intent.type.value}"
@@ -227,6 +237,10 @@ class UnitreeCommandBackend(HardwareCommandPort):
         if intent.type is CommandType.STOP:
             return True
         if intent.type in {CommandType.MOVE, CommandType.TURN}:
+            if isinstance(intent.parameters, (MoveParameters, TurnParameters)):
+                raise UnitreeCommandBackendError(
+                    "protocol v1 distance/angle motion is not mapped to Unitree velocity"
+                )
             if self._motion_strategy is None or self._sleeper is None:
                 raise UnitreeCommandBackendError(
                     f"Unitree command mapping is unsupported for {intent.type.value}"

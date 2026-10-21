@@ -20,10 +20,13 @@ from poppy_agent.command.models import (
     StopParameters,
     TurnDirection,
     TurnParameters,
+    VelocityMoveParameters,
+    VelocityTurnParameters,
     WaitParameters,
 )
 
 SUPPORTED_PROTOCOL_VERSION = 1
+SUPPORTED_PROTOCOL_VERSIONS = frozenset({1, 2})
 
 
 class CommandProtocolParseError(ValueError):
@@ -42,19 +45,19 @@ class HighLevelCommandProtocolParser:
         root = _object(raw, "program")
         _exact_keys(root, {"protocolVersion", "commands"}, "program")
         protocol_version = _integer(root.get("protocolVersion"), "protocolVersion")
-        if protocol_version != SUPPORTED_PROTOCOL_VERSION:
+        if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
             raise CommandProtocolParseError(f"unsupported protocolVersion: {protocol_version}")
 
         commands_value = root.get("commands")
         if not isinstance(commands_value, list):
             raise CommandProtocolParseError("commands must be an array")
         commands = tuple(
-            self._parse_command(index, raw_command)
+            self._parse_command(index, raw_command, protocol_version)
             for index, raw_command in enumerate(commands_value)
         )
         return HighLevelCommandProgram(protocol_version, commands)
 
-    def _parse_command(self, index: int, raw: object) -> HighLevelCommand:
+    def _parse_command(self, index: int, raw: object, protocol_version: int) -> HighLevelCommand:
         command = _object(raw, "command")
         _exact_keys(command, {"sequence", "sourceBlockId", "type", "parameters"}, "command")
         sequence = _integer(command.get("sequence"), "sequence")
@@ -73,21 +76,51 @@ class HighLevelCommandProtocolParser:
         except ValueError as exc:
             raise CommandProtocolParseError(f"unknown command type: {raw_type}") from exc
 
-        parameters = self._parse_parameters(command_type, command.get("parameters"))
+        parameters = self._parse_parameters(
+            command_type, command.get("parameters"), protocol_version
+        )
         return HighLevelCommand(sequence, source_block_id, command_type, parameters)
 
-    def _parse_parameters(self, command_type: CommandType, raw: object) -> CommandParameters:
+    def _parse_parameters(
+        self, command_type: CommandType, raw: object, protocol_version: int
+    ) -> CommandParameters:
         parameters = _object(raw, "parameters")
         if command_type is CommandType.WAIT:
             _exact_keys(parameters, {"durationSeconds"}, "WAIT parameters")
             return WaitParameters(_number(parameters.get("durationSeconds"), "durationSeconds"))
         if command_type is CommandType.MOVE:
+            if protocol_version == 2:
+                _exact_keys(
+                    parameters,
+                    {"linearVelocityMetersPerSecond", "durationSeconds"},
+                    "MOVE parameters",
+                )
+                return VelocityMoveParameters(
+                    _nonzero_number(
+                        parameters.get("linearVelocityMetersPerSecond"),
+                        "linearVelocityMetersPerSecond",
+                    ),
+                    _positive_number(parameters.get("durationSeconds"), "durationSeconds"),
+                )
             _exact_keys(parameters, {"direction", "distanceMeters"}, "MOVE parameters")
             return MoveParameters(
                 _enum(parameters.get("direction"), MoveDirection, "direction"),
                 _number(parameters.get("distanceMeters"), "distanceMeters"),
             )
         if command_type is CommandType.TURN:
+            if protocol_version == 2:
+                _exact_keys(
+                    parameters,
+                    {"angularVelocityDegreesPerSecond", "durationSeconds"},
+                    "TURN parameters",
+                )
+                return VelocityTurnParameters(
+                    _nonzero_number(
+                        parameters.get("angularVelocityDegreesPerSecond"),
+                        "angularVelocityDegreesPerSecond",
+                    ),
+                    _positive_number(parameters.get("durationSeconds"), "durationSeconds"),
+                )
             _exact_keys(parameters, {"direction", "angleDegrees"}, "TURN parameters")
             return TurnParameters(
                 _enum(parameters.get("direction"), TurnDirection, "direction"),
@@ -137,8 +170,18 @@ def parameters_to_dict(parameters: CommandParameters) -> dict[str, object]:
             "direction": parameters.direction.value,
             "distanceMeters": parameters.distance_meters,
         }
+    if isinstance(parameters, VelocityMoveParameters):
+        return {
+            "linearVelocityMetersPerSecond": parameters.linear_velocity_meters_per_second,
+            "durationSeconds": parameters.duration_seconds,
+        }
     if isinstance(parameters, TurnParameters):
         return {"direction": parameters.direction.value, "angleDegrees": parameters.angle_degrees}
+    if isinstance(parameters, VelocityTurnParameters):
+        return {
+            "angularVelocityDegreesPerSecond": parameters.angular_velocity_degrees_per_second,
+            "durationSeconds": parameters.duration_seconds,
+        }
     if isinstance(parameters, StopParameters):
         return {}
     if isinstance(parameters, PostureParameters):
@@ -149,7 +192,7 @@ def parameters_to_dict(parameters: CommandParameters) -> dict[str, object]:
 def _validate_program_model(program: HighLevelCommandProgram) -> None:
     if (
         type(program.protocol_version) is not int
-        or program.protocol_version != SUPPORTED_PROTOCOL_VERSION
+        or program.protocol_version not in SUPPORTED_PROTOCOL_VERSIONS
     ):
         raise CommandProtocolParseError("unsupported protocolVersion")
     for index, command in enumerate(program.commands):
@@ -157,10 +200,10 @@ def _validate_program_model(program: HighLevelCommandProgram) -> None:
             raise CommandProtocolParseError("sequence must be contiguous from zero")
         if not isinstance(command.source_block_id, str) or not command.source_block_id.strip():
             raise CommandProtocolParseError("sourceBlockId must be a non-blank string")
-        _validate_parameters(command)
+        _validate_parameters(command, program.protocol_version)
 
 
-def _validate_parameters(command: HighLevelCommand) -> None:
+def _validate_parameters(command: HighLevelCommand, protocol_version: int) -> None:
     parameters = command.parameters
     valid = (
         (
@@ -171,14 +214,30 @@ def _validate_parameters(command: HighLevelCommand) -> None:
         or (
             command.type is CommandType.MOVE
             and isinstance(parameters, MoveParameters)
+            and protocol_version == 1
             and isinstance(parameters.direction, MoveDirection)
             and _finite_number(parameters.distance_meters)
         )
         or (
+            command.type is CommandType.MOVE
+            and isinstance(parameters, VelocityMoveParameters)
+            and protocol_version == 2
+            and _nonzero_finite_number(parameters.linear_velocity_meters_per_second)
+            and _positive_finite_number(parameters.duration_seconds)
+        )
+        or (
             command.type is CommandType.TURN
             and isinstance(parameters, TurnParameters)
+            and protocol_version == 1
             and isinstance(parameters.direction, TurnDirection)
             and _finite_number(parameters.angle_degrees)
+        )
+        or (
+            command.type is CommandType.TURN
+            and isinstance(parameters, VelocityTurnParameters)
+            and protocol_version == 2
+            and _nonzero_finite_number(parameters.angular_velocity_degrees_per_second)
+            and _positive_finite_number(parameters.duration_seconds)
         )
         or (command.type is CommandType.STOP and isinstance(parameters, StopParameters))
         or (
@@ -237,6 +296,20 @@ def _number(value: object, name: str) -> float:
     return converted
 
 
+def _nonzero_number(value: object, name: str) -> float:
+    number = _number(value, name)
+    if number == 0:
+        raise CommandProtocolParseError(f"{name} must not be zero")
+    return number
+
+
+def _positive_number(value: object, name: str) -> float:
+    number = _number(value, name)
+    if number <= 0:
+        raise CommandProtocolParseError(f"{name} must be positive")
+    return number
+
+
 def _enum(value: object, enum_type: type[Any], name: str) -> Any:
     if not isinstance(value, str):
         raise CommandProtocolParseError(f"{name} must be a string")
@@ -253,6 +326,14 @@ def _finite_number(value: object) -> bool:
         except (OverflowError, ValueError):
             return False
     return type(value) is float and math.isfinite(value)
+
+
+def _nonzero_finite_number(value: object) -> bool:
+    return _finite_number(value) and float(cast(int | float, value)) != 0
+
+
+def _positive_finite_number(value: object) -> bool:
+    return _finite_number(value) and float(cast(int | float, value)) > 0
 
 
 def _reject_non_finite_constant(value: str) -> NoReturn:

@@ -12,6 +12,8 @@ from poppy_agent.command.models import (
     StopParameters,
     TurnDirection,
     TurnParameters,
+    VelocityMoveParameters,
+    VelocityTurnParameters,
     WaitParameters,
 )
 from poppy_agent.command.protocol import (
@@ -28,12 +30,14 @@ __all__ = [
     "HighLevelCommandProgram",
     "MoveDirection",
     "MoveParameters",
+    "VelocityMoveParameters",
     "Posture",
     "PostureParameters",
     "PresetParameters",
     "StopParameters",
     "TurnDirection",
     "TurnParameters",
+    "VelocityTurnParameters",
     "WaitParameters",
     "serialize_command_program",
 ]

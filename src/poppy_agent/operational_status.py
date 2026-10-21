@@ -107,6 +107,7 @@ class AgentOperationalSnapshot:
     physical_profile_version: str | None = None
     motion_capability_verified: bool | None = None
     motion_capability_code: str | None = None
+    motion_capability_verified_codes: tuple[str, ...] = ()
     motion_capability_checked_at: datetime | None = None
     motion_capability_fresh: bool | None = None
     motion_capability_failure: str | None = None
@@ -144,6 +145,7 @@ class AgentOperationalSnapshot:
                 "batterySufficient": None,
                 "capabilityVerified": self.motion_capability_verified,
                 "capabilityCode": self.motion_capability_code,
+                "capabilityVerifiedCodes": list(self.motion_capability_verified_codes),
                 "capabilityCheckedAt": _datetime_value(self.motion_capability_checked_at),
                 "capabilityFresh": self.motion_capability_fresh,
                 "capabilityFailure": self.motion_capability_failure,
@@ -182,6 +184,7 @@ class OperationalStatusTracker:
         self._physical_profile_version = physical_profile_version
         self._motion_capability_verified: bool | None = None
         self._motion_capability_code: str | None = None
+        self._motion_capability_verified_codes: tuple[str, ...] = ()
         self._motion_capability_checked_at: datetime | None = None
         self._motion_capability_fresh: bool | None = None
         self._motion_capability_failure: str | None = None
@@ -189,16 +192,20 @@ class OperationalStatusTracker:
     def set_motion_capability_evidence(
         self,
         *,
-        code: str,
+        code: str | None,
         verified: bool,
+        verified_codes: frozenset[str],
         checked_at: datetime | None,
         fresh: bool,
         failure: str,
     ) -> None:
         if type(verified) is not bool or type(fresh) is not bool:
             raise TypeError("capability evidence booleans must be bool")
+        if not all(isinstance(item, str) and item for item in verified_codes):
+            raise TypeError("verified capability codes must be non-blank strings")
         with self._lock:
             self._motion_capability_code = code
+            self._motion_capability_verified_codes = tuple(sorted(verified_codes))
             self._motion_capability_verified = verified
             self._motion_capability_checked_at = checked_at
             self._motion_capability_fresh = fresh
@@ -264,6 +271,7 @@ class OperationalStatusTracker:
             physical_profile_version = self._physical_profile_version
             motion_capability_verified = self._motion_capability_verified
             motion_capability_code = self._motion_capability_code
+            motion_capability_verified_codes = self._motion_capability_verified_codes
             motion_capability_checked_at = self._motion_capability_checked_at
             motion_capability_fresh = self._motion_capability_fresh
             motion_capability_failure = self._motion_capability_failure
@@ -309,6 +317,7 @@ class OperationalStatusTracker:
             physical_profile_version=physical_profile_version,
             motion_capability_verified=motion_capability_verified,
             motion_capability_code=motion_capability_code,
+            motion_capability_verified_codes=motion_capability_verified_codes,
             motion_capability_checked_at=motion_capability_checked_at,
             motion_capability_fresh=motion_capability_fresh,
             motion_capability_failure=motion_capability_failure,

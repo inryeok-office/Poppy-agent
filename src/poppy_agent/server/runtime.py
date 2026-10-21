@@ -24,6 +24,7 @@ from poppy_agent.execution import (
     ExecutionStatus,
     ExecutionTask,
     UnsupportedExecutionProtocolError,
+    required_capability_codes,
 )
 from poppy_agent.observability import (
     AGENT_REGISTERED,
@@ -309,7 +310,6 @@ class AgentServerRuntime:
     def execution_once(self, executor: ExecutionExecutor) -> ExecutionResult | None:
         """Poll, execute, and report one assigned execution without robot commands."""
         self._set_execution_polling_enabled(True)
-        self._require_fresh_physical_capability_evidence()
         task = self._poll_and_mark_running()
         if task is None:
             return None
@@ -548,7 +548,6 @@ class AgentServerRuntime:
             raise AgentServerRuntimeError("Agent must be registered before execution")
         if self.active_execution_id is not None:
             raise AgentServerRuntimeError("An execution is already active")
-        self._require_fresh_physical_capability_evidence()
         snapshot = self.agent.read_state()
         robot_id = _robot_uuid(snapshot)
         delivery = self.server.fetch_next_execution(self.agent_id, robot_id)
@@ -568,6 +567,12 @@ class AgentServerRuntime:
                 command_program=command_program,
             )
         except (CommandProtocolParseError, UnsupportedExecutionProtocolError):
+            self._report_delivery_failed_best_effort(delivery)
+            raise
+        required_capabilities = required_capability_codes(command_program.commands)
+        try:
+            self._require_fresh_physical_capability_evidence(required_capabilities)
+        except Exception:
             self._report_delivery_failed_best_effort(delivery)
             raise
         self._set_active_execution(task.execution_id)
@@ -1002,7 +1007,7 @@ class AgentServerRuntime:
             self._physical_capability_checked_at = None
         self._publish_capability_status(robot_id)
 
-    def _require_fresh_physical_capability_evidence(self) -> None:
+    def _require_fresh_physical_capability_evidence(self, required_codes: frozenset[str]) -> None:
         cache = self._physical_capability_cache
         if cache is None:
             return
@@ -1010,9 +1015,9 @@ class AgentServerRuntime:
             raise AgentServerRuntimeError("Agent must be registered before capability validation")
         robot_id = _robot_uuid(self.agent.read_state())
         self._refresh_physical_capability_evidence(force=True)
-        if not cache.ready(robot_id):
+        if not cache.permits(robot_id, required_codes):
             raise AgentServerRuntimeError(
-                "physical command capability evidence is not fresh and verified"
+                "physical command capability evidence is not fresh and verified for this program"
             )
 
     def _publish_capability_status(self, robot_id: UUID) -> None:
@@ -1021,8 +1026,9 @@ class AgentServerRuntime:
             return
         snapshot = cache.snapshot(robot_id)
         self._operational_status.set_motion_capability_evidence(
-            code=snapshot.required_code,
-            verified=snapshot.verified,
+            code=None,
+            verified=bool(snapshot.verified_codes),
+            verified_codes=snapshot.verified_codes,
             checked_at=self._physical_capability_checked_at,
             fresh=snapshot.fresh(now=monotonic(), ttl_seconds=cache.policy.ttl_seconds),
             failure=snapshot.failure.value,

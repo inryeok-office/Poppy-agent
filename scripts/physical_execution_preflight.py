@@ -34,6 +34,8 @@ from poppy_agent.command import (  # noqa: E402
     StopParameters,
     TurnDirection,
     TurnParameters,
+    VelocityMoveParameters,
+    VelocityTurnParameters,
     WaitParameters,
 )
 from poppy_agent.execution import (  # noqa: E402
@@ -213,8 +215,8 @@ def synthetic_test_evidence() -> PhysicalReadinessEvidence:
     )
 
 
-def _server_payload(*commands: dict[str, object]) -> str:
-    return json.dumps({"protocolVersion": 1, "commands": list(commands)})
+def _server_payload(*commands: dict[str, object], protocol_version: int = 1) -> str:
+    return json.dumps({"protocolVersion": protocol_version, "commands": list(commands)})
 
 
 def _task(payload: str) -> ExecutionTask:
@@ -236,12 +238,12 @@ def _command(
     return HighLevelCommand(sequence, source_block_id, command_type, parameters)  # type: ignore[arg-type]
 
 
-def _program(*commands: HighLevelCommand) -> ExecutionTask:
+def _program(*commands: HighLevelCommand, protocol_version: int = 1) -> ExecutionTask:
     return ExecutionTask(
         execution_id=UUID("00000000-0000-0000-0000-000000000078"),
         robot_id=ROBOT_ID,
-        protocol_version=1,
-        command_program=HighLevelCommandProgram(1, commands),
+        protocol_version=protocol_version,
+        command_program=HighLevelCommandProgram(protocol_version, commands),
     )
 
 
@@ -465,8 +467,9 @@ def _mapped_motion_phase() -> str:
     try:
         result = executor.execute(
             _program(
-                _command(0, "move", CommandType.MOVE, MoveParameters(MoveDirection.FORWARD, 1.0)),
-                _command(1, "turn", CommandType.TURN, TurnParameters(TurnDirection.LEFT, 90.0)),
+                _command(0, "move", CommandType.MOVE, VelocityMoveParameters(0.25, 2.0)),
+                _command(1, "turn", CommandType.TURN, VelocityTurnParameters(0.5, 1.0)),
+                protocol_version=2,
             )
         )
         moves = [call for call in sdk.dispatch_calls if call.operation == "Move"]
@@ -567,8 +570,9 @@ def _cancellation_phase() -> str:
                 "sequence": 0,
                 "sourceBlockId": "move",
                 "type": "MOVE",
-                "parameters": {"direction": "FORWARD", "distanceMeters": 1.0},
-            }
+                "parameters": {"linearVelocityMetersPerSecond": 0.25, "durationSeconds": 1.0},
+            },
+            protocol_version=2,
         )
     )
     sleeper = DisconnectingSleeper(authority)
@@ -595,8 +599,9 @@ def _disconnect_phase() -> str:
                 "sequence": 0,
                 "sourceBlockId": "move",
                 "type": "MOVE",
-                "parameters": {"direction": "FORWARD", "distanceMeters": 1.0},
-            }
+                "parameters": {"linearVelocityMetersPerSecond": 0.25, "durationSeconds": 1.0},
+            },
+            protocol_version=2,
         )
     )
     sdk = RecordingSportClient()

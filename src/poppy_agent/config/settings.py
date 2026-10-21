@@ -115,9 +115,6 @@ class AgentConfig:
             )
             try:
                 physical_capability_evidence_policy = CapabilityEvidencePolicy(
-                    required_code=_required(
-                        values, "POPPY_PHYSICAL_REQUIRED_CAPABILITY_CODE"
-                    ).upper(),
                     refresh_interval_seconds=_parse_positive_finite_float(
                         _required(values, "POPPY_PHYSICAL_CAPABILITY_REFRESH_INTERVAL_SECONDS"),
                         "POPPY_PHYSICAL_CAPABILITY_REFRESH_INTERVAL_SECONDS",

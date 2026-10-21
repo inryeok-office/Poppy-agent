@@ -267,7 +267,7 @@ def test_physical_capability_evidence_is_requested_after_registration() -> None:
         server,  # type: ignore[arg-type]
         config,
         physical_execution_enabled=True,
-        physical_capability_evidence_policy=CapabilityEvidencePolicy("COMMAND_MOVE", 2, 5, 1),
+        physical_capability_evidence_policy=CapabilityEvidencePolicy(2, 5, 1),
     )
 
     runtime.start()
@@ -282,7 +282,17 @@ def test_physical_capability_evidence_is_requested_after_registration() -> None:
 def test_revoked_capability_blocks_before_execution_delivery() -> None:
     class EvidenceServer(RecordingServer):
         def __init__(self) -> None:
-            super().__init__([assigned_delivery()])
+            super().__init__(
+                [
+                    assigned_delivery(
+                        command_payload=(
+                            '{"protocolVersion":1,"commands":[{"sequence":0,'
+                            '"sourceBlockId":"move","type":"MOVE","parameters":'
+                            '{"direction":"FORWARD","distanceMeters":0.1}}]}'
+                        )
+                    )
+                ]
+            )
             self.status = CapabilityEvidenceStatus.VERIFIED
 
         def get_capability_evidence(
@@ -308,7 +318,7 @@ def test_revoked_capability_blocks_before_execution_delivery() -> None:
         server,  # type: ignore[arg-type]
         config,
         physical_execution_enabled=True,
-        physical_capability_evidence_policy=CapabilityEvidencePolicy("COMMAND_MOVE", 2, 5, 1),
+        physical_capability_evidence_policy=CapabilityEvidencePolicy(2, 5, 1),
     )
     runtime.start()
     server.status = CapabilityEvidenceStatus.UNVERIFIED
@@ -316,7 +326,8 @@ def test_revoked_capability_blocks_before_execution_delivery() -> None:
     with pytest.raises(AgentServerRuntimeError, match="capability evidence"):
         runtime.execution_once(lambda _task: None)  # type: ignore[arg-type]
 
-    assert "fetch" not in server.events
+    assert "fetch" in server.events
+    assert "report:FAILED" in server.events
     assert (
         runtime.operational_snapshot().to_dict()["physicalReadiness"]["capabilityVerified"] is False
     )
@@ -520,7 +531,7 @@ def test_shutdown_failure_publishes_failed_and_not_stopped(
 
 @pytest.mark.parametrize(
     ("status", "protocol_version", "message"),
-    [("RUNNING", 1, "status"), ("ASSIGNED", 2, "unsupported execution protocol")],
+    [("RUNNING", 1, "status"), ("ASSIGNED", 3, "unsupported execution protocol")],
 )
 def test_execution_rejects_invalid_delivery_metadata(
     status: str, protocol_version: int, message: str

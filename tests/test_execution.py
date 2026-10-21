@@ -80,7 +80,7 @@ def test_task_accepts_supported_protocol_with_uuid_metadata() -> None:
     assert execution_task.protocol_version == 1
 
 
-@pytest.mark.parametrize("protocol_version", [True, 1.0, "1", 2])
+@pytest.mark.parametrize("protocol_version", [True, 1.0, "1", 3])
 def test_task_rejects_unsupported_or_non_integer_protocol_version(
     protocol_version: object,
 ) -> None:

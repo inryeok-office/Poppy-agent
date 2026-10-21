@@ -15,10 +15,12 @@ from poppy_agent.command import (
     PresetParameters,
     StopParameters,
     TurnParameters,
+    VelocityMoveParameters,
+    VelocityTurnParameters,
     WaitParameters,
 )
 from poppy_agent.execution.models import (
-    SUPPORTED_EXECUTION_PROTOCOL_VERSION,
+    SUPPORTED_EXECUTION_PROTOCOL_VERSIONS,
     ExecutionTask,
 )
 
@@ -65,11 +67,11 @@ class ExecutionSafetyValidator:
 
     def validate(self, task: ExecutionTask) -> None:
         """Validate the complete task before allowing target execution."""
-        if task.protocol_version != SUPPORTED_EXECUTION_PROTOCOL_VERSION:
+        if task.protocol_version not in SUPPORTED_EXECUTION_PROTOCOL_VERSIONS:
             raise SafetyValidationError(
                 "unsupported execution protocol version: "
-                f"{task.protocol_version}; supported version is "
-                f"{SUPPORTED_EXECUTION_PROTOCOL_VERSION}"
+                f"{task.protocol_version}; supported versions are "
+                f"{sorted(SUPPORTED_EXECUTION_PROTOCOL_VERSIONS)}"
             )
         if task.command_program.protocol_version != task.protocol_version:
             raise SafetyValidationError("execution protocol version does not match command program")
@@ -77,16 +79,18 @@ class ExecutionSafetyValidator:
             raise SafetyValidationError("execution robot identity does not match Agent binding")
 
         for index, command in enumerate(task.command_program.commands):
-            self._validate_command(index, command)
+            self._validate_command(index, command, task.protocol_version)
 
-    def _validate_command(self, index: int, command: HighLevelCommand) -> None:
+    def _validate_command(
+        self, index: int, command: HighLevelCommand, protocol_version: int
+    ) -> None:
         if type(command.sequence) is not int or command.sequence != index:
             raise SafetyValidationError("command sequence is not contiguous")
         if not isinstance(command.source_block_id, str) or not command.source_block_id.strip():
             raise SafetyValidationError("command sourceBlockId must be non-blank")
         if not isinstance(command.type, CommandType):
             raise SafetyValidationError("command type is not supported")
-        self._validate_parameters(command)
+        self._validate_parameters(command, protocol_version)
         try:
             supported = self._target.supports(command.type)
         except Exception as exc:
@@ -106,19 +110,33 @@ class ExecutionSafetyValidator:
                     f"execution target preflight failed for {command.type.value}"
                 ) from exc
 
-    def _validate_parameters(self, command: HighLevelCommand) -> None:
+    def _validate_parameters(self, command: HighLevelCommand, protocol_version: int) -> None:
         parameters = command.parameters
         if command.type is CommandType.WAIT:
             valid = isinstance(parameters, WaitParameters) and _finite_number(
                 parameters.duration_seconds
             )
         elif command.type is CommandType.MOVE:
-            valid = isinstance(parameters, MoveParameters) and _finite_number(
-                parameters.distance_meters
+            valid = (
+                protocol_version == 1
+                and isinstance(parameters, MoveParameters)
+                and _finite_number(parameters.distance_meters)
+            ) or (
+                protocol_version == 2
+                and isinstance(parameters, VelocityMoveParameters)
+                and _nonzero_finite_number(parameters.linear_velocity_meters_per_second)
+                and _positive_finite_number(parameters.duration_seconds)
             )
         elif command.type is CommandType.TURN:
-            valid = isinstance(parameters, TurnParameters) and _finite_number(
-                parameters.angle_degrees
+            valid = (
+                protocol_version == 1
+                and isinstance(parameters, TurnParameters)
+                and _finite_number(parameters.angle_degrees)
+            ) or (
+                protocol_version == 2
+                and isinstance(parameters, VelocityTurnParameters)
+                and _nonzero_finite_number(parameters.angular_velocity_degrees_per_second)
+                and _positive_finite_number(parameters.duration_seconds)
             )
         elif command.type is CommandType.STOP:
             valid = isinstance(parameters, StopParameters)
@@ -154,3 +172,11 @@ def _finite_number(value: object) -> bool:
         return math.isfinite(float(cast(int | float, value)))
     except (OverflowError, ValueError):
         return False
+
+
+def _nonzero_finite_number(value: object) -> bool:
+    return _finite_number(value) and float(cast(int | float, value)) != 0
+
+
+def _positive_finite_number(value: object) -> bool:
+    return _finite_number(value) and float(cast(int | float, value)) > 0

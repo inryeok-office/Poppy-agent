@@ -43,9 +43,25 @@ class MoveParameters:
 
 
 @dataclass(frozen=True, slots=True)
+class VelocityMoveParameters:
+    """Protocol v2 signed linear velocity and bounded duration."""
+
+    linear_velocity_meters_per_second: float
+    duration_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
 class TurnParameters:
     direction: TurnDirection
     angle_degrees: float
+
+
+@dataclass(frozen=True, slots=True)
+class VelocityTurnParameters:
+    """Protocol v2 signed yaw velocity (degrees/s) and bounded duration."""
+
+    angular_velocity_degrees_per_second: float
+    duration_seconds: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +82,9 @@ class PresetParameters:
 CommandParameters: TypeAlias = (
     WaitParameters
     | MoveParameters
+    | VelocityMoveParameters
     | TurnParameters
+    | VelocityTurnParameters
     | StopParameters
     | PostureParameters
     | PresetParameters

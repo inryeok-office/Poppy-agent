@@ -9,6 +9,7 @@ from uuid import UUID
 from poppy_agent.command.models import HighLevelCommandProgram
 
 SUPPORTED_EXECUTION_PROTOCOL_VERSION = 1
+SUPPORTED_EXECUTION_PROTOCOL_VERSIONS = frozenset({1, 2})
 
 
 class UnsupportedExecutionProtocolError(ValueError):
@@ -27,12 +28,12 @@ class ExecutionTask:
     def __post_init__(self) -> None:
         if (
             type(self.protocol_version) is not int
-            or self.protocol_version != SUPPORTED_EXECUTION_PROTOCOL_VERSION
+            or self.protocol_version not in SUPPORTED_EXECUTION_PROTOCOL_VERSIONS
         ):
             raise UnsupportedExecutionProtocolError(
                 "unsupported execution protocol version: "
-                f"{self.protocol_version}; supported version is "
-                f"{SUPPORTED_EXECUTION_PROTOCOL_VERSION}"
+                f"{self.protocol_version}; supported versions are "
+                f"{sorted(SUPPORTED_EXECUTION_PROTOCOL_VERSIONS)}"
             )
         if (
             not isinstance(self.command_program, HighLevelCommandProgram)

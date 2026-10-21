@@ -31,7 +31,6 @@ def _physical_environment(**overrides: str) -> dict[str, str]:
         "POPPY_PHYSICAL_MAX_ANGULAR_RATE_DEGREES_PER_SECOND": "15",
         "POPPY_PHYSICAL_MAX_COMMAND_DURATION_SECONDS": "3",
         "POPPY_PHYSICAL_MIN_BATTERY_PERCENT": "50",
-        "POPPY_PHYSICAL_REQUIRED_CAPABILITY_CODE": "COMMAND_MOVE",
         "POPPY_PHYSICAL_CAPABILITY_REFRESH_INTERVAL_SECONDS": "2",
         "POPPY_PHYSICAL_CAPABILITY_TTL_SECONDS": "5",
         "POPPY_PHYSICAL_CAPABILITY_REQUEST_TIMEOUT_SECONDS": "1",
@@ -48,7 +47,6 @@ def test_physical_execution_requires_complete_explicit_policy() -> None:
     assert config.physical_motion_policy is not None
     assert config.physical_minimum_battery_percent == 50
     assert config.physical_capability_evidence_policy is not None
-    assert config.physical_capability_evidence_policy.required_code == "COMMAND_MOVE"
 
 
 @pytest.mark.parametrize(
@@ -60,7 +58,6 @@ def test_physical_execution_requires_complete_explicit_policy() -> None:
         ("POPPY_PHYSICAL_MAX_COMMAND_DURATION_SECONDS", "0"),
         ("POPPY_PHYSICAL_MIN_BATTERY_PERCENT", "101"),
         ("POPPY_PHYSICAL_MIN_BATTERY_PERCENT", "50.0"),
-        ("POPPY_PHYSICAL_REQUIRED_CAPABILITY_CODE", ""),
         ("POPPY_PHYSICAL_CAPABILITY_TTL_SECONDS", "0"),
     ],
 )

@@ -17,6 +17,8 @@ from poppy_agent.command import (
     MoveParameters,
     TurnDirection,
     TurnParameters,
+    VelocityMoveParameters,
+    VelocityTurnParameters,
 )
 from poppy_agent.execution.cancellation import ExecutionCancellationToken
 
@@ -96,6 +98,25 @@ class MotionExecutionStrategy:
                 rate_unit=MotionRateUnit.METERS_PER_SECOND,
                 duration_seconds=duration,
             )
+        if intent.type is CommandType.MOVE and isinstance(
+            intent.parameters, VelocityMoveParameters
+        ):
+            velocity = intent.parameters.linear_velocity_meters_per_second
+            duration = intent.parameters.duration_seconds
+            if not math.isfinite(velocity) or velocity == 0:
+                raise MotionStrategyError("MOVE velocity must be a non-zero finite number")
+            _positive_finite(duration, "motion duration")
+            return MotionPlan(
+                sequence=intent.sequence,
+                source_block_id=intent.source_block_id,
+                command_type=intent.type,
+                direction=MoveDirection.FORWARD if velocity > 0 else MoveDirection.BACKWARD,
+                magnitude=abs(velocity) * duration,
+                magnitude_unit=MotionUnit.METERS,
+                rate=abs(velocity),
+                rate_unit=MotionRateUnit.METERS_PER_SECOND,
+                duration_seconds=duration,
+            )
         if intent.type is CommandType.TURN and isinstance(intent.parameters, TurnParameters):
             _positive_finite(intent.parameters.angle_degrees, "TURN angle")
             rate = self._profile.angular_rate_degrees_per_second
@@ -109,6 +130,25 @@ class MotionExecutionStrategy:
                 magnitude=intent.parameters.angle_degrees,
                 magnitude_unit=MotionUnit.DEGREES,
                 rate=rate,
+                rate_unit=MotionRateUnit.DEGREES_PER_SECOND,
+                duration_seconds=duration,
+            )
+        if intent.type is CommandType.TURN and isinstance(
+            intent.parameters, VelocityTurnParameters
+        ):
+            velocity = intent.parameters.angular_velocity_degrees_per_second
+            duration = intent.parameters.duration_seconds
+            if not math.isfinite(velocity) or velocity == 0:
+                raise MotionStrategyError("TURN angular velocity must be a non-zero finite number")
+            _positive_finite(duration, "motion duration")
+            return MotionPlan(
+                sequence=intent.sequence,
+                source_block_id=intent.source_block_id,
+                command_type=intent.type,
+                direction=TurnDirection.LEFT if velocity > 0 else TurnDirection.RIGHT,
+                magnitude=abs(velocity) * duration,
+                magnitude_unit=MotionUnit.DEGREES,
+                rate=abs(velocity),
                 rate_unit=MotionRateUnit.DEGREES_PER_SECOND,
                 duration_seconds=duration,
             )

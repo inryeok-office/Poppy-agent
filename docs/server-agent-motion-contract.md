@@ -48,12 +48,18 @@ grant approval, expose administrator data, or add a database migration.
 The Agent queries this endpoint only after registration when physical execution
 has been explicitly requested. Its cache uses a monotonic TTL. A malformed,
 empty, unknown, unverified, unsupported, revoked, stale, unauthorized, or
-unreachable result never grants a command. Before execution polling, the Agent
-forces one fresh read. This is capability evidence only: it does not turn
-physical execution on and does not replace any other readiness blocker.
+unreachable result never grants a command. After delivery parsing and before an
+execution is marked running, the Agent forces one fresh read and requires the
+trusted Server-equivalent set: `MOVE` → `COMMAND_MOVE`, `TURN` →
+`COMMAND_TURN`, `STOP` → `COMMAND_STOP`, `POSTURE` → `COMMAND_POSTURE`, and
+`PRESET` → `COMMAND_PRESET`; `WAIT` requires none. This map is code-owned, not
+an environment variable, so one configured code cannot authorize another
+command. This is capability evidence only: it does not turn physical execution
+on and does not replace any other readiness blocker.
 
-The current runtime uses a revocation or lookup failure to block every *new*
-execution before delivery is fetched. It deliberately does **not** claim that
+The current runtime force-refreshes evidence after parsing a delivered program
+and before it is marked running; a revocation or lookup failure blocks that
+*new* execution and reports the delivery as failed. It deliberately does **not** claim that
 it can interrupt an already-running physical motion: connecting revocation to
 an active command's one-shot `StopMove` requires the still-unimplemented v2
 physical executor and vendor-call isolation work below.
