@@ -1,4 +1,4 @@
-"""Pure motion planning for Poppy distance and angle semantics.
+"""Pure motion planning for Poppy v1 and v2 motion semantics.
 
 The strategy produces a plan only. It does not select production safety values,
 open a robot connection, or call a vendor SDK.

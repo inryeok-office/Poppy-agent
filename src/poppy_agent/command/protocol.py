@@ -1,4 +1,4 @@
-"""Strict parser and serializer for High-level Command Protocol v1."""
+"""Strict parser and serializer for High-level Command Protocol versions 1 and 2."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ SUPPORTED_PROTOCOL_VERSIONS = frozenset({1, 2})
 
 
 class CommandProtocolParseError(ValueError):
-    """Raised when a Command Protocol v1 document violates its contract."""
+    """Raised when a supported Command Protocol document violates its contract."""
 
 
 class HighLevelCommandProtocolParser:
@@ -140,7 +140,7 @@ class HighLevelCommandProtocolParser:
 
 
 def serialize_command_program(program: HighLevelCommandProgram) -> str:
-    """Serialize a typed program using the v1 wire field names."""
+    """Serialize a typed program using fields for its declared protocol version."""
     _validate_program_model(program)
     return json.dumps(program_to_dict(program), ensure_ascii=False, separators=(",", ":"))
 
