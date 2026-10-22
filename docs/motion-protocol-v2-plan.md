@@ -46,3 +46,14 @@ Deploy parser and simulator support before any v2-producing frontend. Keep
 allocation fail-closed unless verified `COMMAND_*` capability, reviewed profile,
 fresh telemetry, identity evidence, and field approval exist. Rollback disables
 v2 allocation; it does not mutate existing v1 revisions or database rows.
+
+## SDK yaw boundary evidence
+
+The installed Unitree SDK checkout at `65691c8a8bc53b98d3976dba4dbf9d5d20b2e7f5`
+defines `unitree_sdk2py/go2/sport/sport_client.py::SportClient.Move(vx, vy,
+vyaw)` and forwards `vyaw` as the RPC `z` parameter. The GO2 example calls
+`Move(0, 0, 0.5)` but contains no unit, sign, or firmware-level direction
+contract. This source is insufficient to infer radians-per-second or a
+positive-turn convention. The public v2 field remains degrees-per-second;
+a reviewed single Agent conversion boundary and hardware validation remain
+required before physical enablement.
