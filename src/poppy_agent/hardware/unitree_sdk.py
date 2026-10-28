@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Protocol
 
-from poppy_agent.command import CommandType, TurnDirection
+from poppy_agent.command import CommandType, MoveDirection, TurnDirection
+from poppy_agent.config.open_motion import MAX_LINEAR_SPEED_METERS_PER_SECOND, PRESET_SDK_METHODS
 from poppy_agent.config.physical_trial import GO2_MAX_YAW_RATE_RADIANS_PER_SECOND
 from poppy_agent.execution.cancellation import (
     ExecutionCancellationToken,
@@ -106,6 +107,35 @@ class Go2TurnRateMapper:
 
 
 @dataclass(frozen=True, slots=True)
+class Go2MotionMapper:
+    """Map MOVE to ``Move(±speed, 0, 0)`` and TURN through :class:`Go2TurnRateMapper`."""
+
+    turn_left_yaw_sign: int
+
+    def __call__(self, plan: MotionPlan) -> UnitreeMotionCommand:
+        if plan.command_type is CommandType.TURN:
+            return Go2TurnRateMapper(self.turn_left_yaw_sign)(plan)
+        if plan.command_type is not CommandType.MOVE:
+            raise UnitreeTurnRateMappingError("only MOVE and TURN plans can map to Move")
+        if plan.magnitude_unit is not MotionUnit.METERS:
+            raise UnitreeTurnRateMappingError("MOVE magnitude must use meters")
+        if plan.rate_unit is not MotionRateUnit.METERS_PER_SECOND:
+            raise UnitreeTurnRateMappingError("MOVE rate must use meters/second")
+        if not isinstance(plan.direction, MoveDirection):
+            raise UnitreeTurnRateMappingError("MOVE plan must have a typed direction")
+        if type(plan.rate) not in (int, float) or not math.isfinite(float(plan.rate)):
+            raise UnitreeTurnRateMappingError("MOVE rate must be a finite number")
+        if plan.rate <= 0 or plan.rate > MAX_LINEAR_SPEED_METERS_PER_SECOND:
+            raise UnitreeTurnRateMappingError("MOVE speed is outside the approved range")
+        direction = 1 if plan.direction is MoveDirection.FORWARD else -1
+        return UnitreeMotionCommand(vx=direction * float(plan.rate), vy=0.0, vyaw=0.0)
+
+
+# Official SDK methods this adapter may call for PRESET; nothing else is reachable.
+_PRESET_METHOD_NAMES = frozenset(PRESET_SDK_METHODS.values())
+
+
+@dataclass(frozen=True, slots=True)
 class MotionStreamTiming:
     """Timing for repeated ``Move`` while the expiry behavior is unverified."""
 
@@ -120,8 +150,14 @@ class MotionStreamTiming:
     wait: Callable[[float, ExecutionCancellationToken | None], bool] | None = None
 
 
-def default_unitree_sport_client_factory(network_interface: str | None = None) -> object:
-    """Initialize the official DDS channel and create a Go2 SportClient lazily."""
+def default_unitree_sport_client_factory(
+    network_interface: str | None = None, rpc_timeout_seconds: float | None = None
+) -> object:
+    """Initialize the official DDS channel and create a Go2 SportClient lazily.
+
+    ``rpc_timeout_seconds`` mirrors the official example's ``SetTimeout(10.0)``
+    (example/go2/high_level/go2_sport_client.py:84); the SDK default is 1.0 s.
+    """
     if not isinstance(network_interface, str) or not network_interface.strip():
         raise UnitreeSdkCommandError("an explicit Unitree network interface is required")
     try:
@@ -138,7 +174,10 @@ def default_unitree_sport_client_factory(network_interface: str | None = None) -
         ) from exc
     try:
         channel_factory_initialize(0, network_interface)
-        return sport_client()
+        client = sport_client()
+        if rpc_timeout_seconds is not None:
+            client.SetTimeout(rpc_timeout_seconds)
+        return client
     except Exception as exc:
         raise UnitreeSdkCommandError(
             f"Unitree SportClient construction failed: {type(exc).__name__}"
@@ -162,13 +201,14 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
         network_interface: str | None = None,
         motion_mapper: UnitreeMotionMapper | None = None,
         timing: MotionStreamTiming | None = None,
+        rpc_timeout_seconds: float | None = None,
     ) -> None:
         if sdk_client is not None and sdk_client_factory is not None:
             raise ValueError("provide sdk_client or sdk_client_factory, not both")
         self._sdk_client = sdk_client
         self._client_acquired = sdk_client is not None
         self._sdk_client_factory = sdk_client_factory or (
-            lambda: default_unitree_sport_client_factory(network_interface)
+            lambda: default_unitree_sport_client_factory(network_interface, rpc_timeout_seconds)
         )
         self._motion_mapper = motion_mapper
         self._timing = timing or MotionStreamTiming()
@@ -216,6 +256,16 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
     def stand_up(self) -> bool:
         """Call the official ``StandUp`` operation after initialization."""
         return self._call_operation("StandUp")
+
+    def balance_stand(self) -> bool:
+        """Call the official ``BalanceStand`` operation after initialization."""
+        return self._call_operation("BalanceStand")
+
+    def preset(self, method_name: str) -> bool:
+        """Call one allow-listed official preset method (Hello, Stretch, Heart, Dance1)."""
+        if method_name not in _PRESET_METHOD_NAMES:
+            raise UnitreeSdkCommandError("preset method is not allow-listed")
+        return self._call_operation(method_name)
 
     def execute_motion(self, plan: MotionPlan) -> bool:
         """Call ``Move`` only with explicitly supplied SDK-shaped arguments."""
@@ -298,7 +348,7 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
             if trace.stop_move_successes == 0 and (
                 primary_error is None or isinstance(primary_error, ExecutionCancelledError)
             ):
-                raise UnitreeMotionOutcomeUnknownError("no StopMove call succeeded after TURN")
+                raise UnitreeMotionOutcomeUnknownError("no StopMove call succeeded after motion")
         return True
 
     def stop_move(self) -> bool:
@@ -381,6 +431,7 @@ def _normalize_result(result: object, operation: str) -> bool:
 
 
 __all__ = [
+    "Go2MotionMapper",
     "Go2TurnRateMapper",
     "MotionStreamTiming",
     "MotionStreamTrace",

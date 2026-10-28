@@ -144,13 +144,20 @@ class UnitreeGo2Adapter:
             return self._telemetry_snapshot
 
     def capabilities(self) -> tuple[str, ...]:
-        """Always report COMMAND_TURN so registration stays compatible.
+        """Always report every trial command capability so registration stays compatible.
 
-        Once the Server knows COMMAND_TURN for this Robot, omitting it would fail
-        registration.  Whether a TURN may run is controlled by operational status.
+        Once the Server knows a capability for this Robot, omitting it would fail
+        registration.  Whether a command may run is controlled by operational status.
         """
         self._require_initialized()
-        return ("TELEMETRY", "COMMAND_TURN")
+        return (
+            "TELEMETRY",
+            "COMMAND_TURN",
+            "COMMAND_MOVE",
+            "COMMAND_STOP",
+            "COMMAND_POSTURE",
+            "COMMAND_PRESET",
+        )
 
     def shutdown(self) -> None:
         """Close only the read-only subscriber; no SDK command is sent."""

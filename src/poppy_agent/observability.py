@@ -53,6 +53,8 @@ PHYSICAL_EXECUTION_ENABLED = "physical_execution_enabled"
 EXECUTION_PHYSICAL_TURN_STARTED = "execution_physical_turn_started"
 EXECUTION_PHYSICAL_TURN_FINISHED = "execution_physical_turn_finished"
 EXECUTION_PHYSICAL_TRIAL_LOCKED = "execution_physical_trial_locked"
+EXECUTION_PHYSICAL_ACTION_STARTED = "execution_physical_action_started"
+EXECUTION_PHYSICAL_ACTION_FINISHED = "execution_physical_action_finished"
 
 _ALLOWED_CONTEXT = frozenset(
     {
@@ -82,6 +84,12 @@ _ALLOWED_CONTEXT = frozenset(
         "trial_commands_used",
         "trial_commands_max",
         "approval_ref",
+        "distance_meters",
+        "vx",
+        "action",
+        "sdk_operations",
+        "trial_mode",
+        "expires_at",
     }
 )
 

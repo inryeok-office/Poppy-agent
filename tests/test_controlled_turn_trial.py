@@ -555,7 +555,14 @@ def test_adapter_reports_ready_only_with_fresh_telemetry_and_readiness(monkeypat
     monkeypatch.setattr(adapter, "_initialized", True)
     readiness = {"value": True}
 
-    assert adapter.capabilities() == ("TELEMETRY", "COMMAND_TURN")
+    assert adapter.capabilities() == (
+        "TELEMETRY",
+        "COMMAND_TURN",
+        "COMMAND_MOVE",
+        "COMMAND_STOP",
+        "COMMAND_POSTURE",
+        "COMMAND_PRESET",
+    )
     assert adapter.status().operational_status == "UNAVAILABLE"
 
     adapter._handle_state(SimpleNamespace(bms_state=SimpleNamespace(soc=80)))

@@ -10,7 +10,9 @@ from poppy_agent.hardware.boundary import (
 )
 from poppy_agent.hardware.factory import (
     ControlledTrialExecution,
+    OpenMotionExecution,
     create_controlled_trial_executor,
+    create_open_motion_executor,
     create_unitree_execution_executor,
 )
 from poppy_agent.hardware.unitree import (
@@ -32,6 +34,8 @@ from poppy_agent.hardware.unitree_sdk import (
 
 __all__ = [
     "ControlledTrialExecution",
+    "OpenMotionExecution",
+    "create_open_motion_executor",
     "create_controlled_trial_executor",
     "FakeHardwareBackend",
     "FakeHardwareBackendError",

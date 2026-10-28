@@ -5,8 +5,15 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from math import isfinite
 
+from poppy_agent.config.open_motion import (
+    CONTROLLED_MOTION_OPEN_MODE,
+    OPEN_MOTION_ENVIRONMENT_KEYS,
+    OpenMotionSettings,
+    load_open_motion_settings,
+)
 from poppy_agent.config.physical_trial import (
     PHYSICAL_TRIAL_ENVIRONMENT_KEYS,
     PhysicalTrialSettings,
@@ -31,7 +38,7 @@ class AgentConfig:
     robot_firmware_version: str | None = None
     unitree_sdk_version: str | None = None
     unitree_telemetry_stale_timeout_seconds: float | None = None
-    physical_trial: PhysicalTrialSettings | None = None
+    physical_trial: PhysicalTrialSettings | OpenMotionSettings | None = None
     physical_trial_issues: tuple[str, ...] = ()
 
     @classmethod
@@ -76,12 +83,16 @@ class AgentConfig:
             )
 
         # Trial values never abort startup; issues are reported as BLOCKED reasons.
-        physical_trial: PhysicalTrialSettings | None = None
+        physical_trial: PhysicalTrialSettings | OpenMotionSettings | None = None
         physical_trial_issues: tuple[str, ...] = ()
-        if physical_execution_enabled or any(
-            values.get(key, "").strip() for key in PHYSICAL_TRIAL_ENVIRONMENT_KEYS
-        ):
-            physical_trial, physical_trial_issues = load_physical_trial_settings(values)
+        trial_keys = (*PHYSICAL_TRIAL_ENVIRONMENT_KEYS, *OPEN_MOTION_ENVIRONMENT_KEYS)
+        if physical_execution_enabled or any(values.get(key, "").strip() for key in trial_keys):
+            if values.get("POPPY_PHYSICAL_TRIAL_MODE", "").strip() == CONTROLLED_MOTION_OPEN_MODE:
+                physical_trial, physical_trial_issues = load_open_motion_settings(
+                    values, now=lambda: datetime.now(UTC)
+                )
+            else:
+                physical_trial, physical_trial_issues = load_physical_trial_settings(values)
 
         return cls(
             robot_mode=robot_mode,

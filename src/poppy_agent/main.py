@@ -5,15 +5,16 @@ from __future__ import annotations
 import logging
 import signal
 import sys
+from collections.abc import Callable
 from signal import Signals
 from threading import Event
 from types import FrameType
 from uuid import UUID
 
 from poppy_agent.agent import Agent, create_agent
-from poppy_agent.config import AgentConfig, ConfigurationError
+from poppy_agent.config import AgentConfig, ConfigurationError, OpenMotionSettings
 from poppy_agent.execution import MockExecutionExecutor, PhysicalExecutionBlockedError
-from poppy_agent.hardware import create_controlled_trial_executor
+from poppy_agent.hardware import create_controlled_trial_executor, create_open_motion_executor
 from poppy_agent.observability import (
     PHYSICAL_EXECUTION_BLOCKED,
     PHYSICAL_EXECUTION_ENABLED,
@@ -137,11 +138,17 @@ def _create_physical_trial_executor(
     if not callable(telemetry_fresh) or not callable(set_command_readiness):
         _publish_blocked(runtime, config, ("ROBOT_ADAPTER_UNSUPPORTED",))
         return None
+    if isinstance(config.physical_trial, OpenMotionSettings):
+        return _create_open_motion_executor(
+            config, config.physical_trial, runtime, telemetry_fresh, set_command_readiness
+        )
     try:
         trial = create_controlled_trial_executor(
             robot_id=UUID(config.robot_id),
             physical_execution_enabled=True,
-            trial_settings=config.physical_trial,
+            trial_settings=config.physical_trial
+            if not isinstance(config.physical_trial, OpenMotionSettings)
+            else None,
             telemetry_fresh=telemetry_fresh,
             network_interface=config.network_interface,
         )
@@ -186,6 +193,82 @@ def _create_physical_trial_executor(
         logging.WARNING,
         PHYSICAL_EXECUTION_ENABLED,
         trial_commands_max=settings.max_commands,
+        approval_ref=settings.approval_ref,
+    )
+    return trial.executor
+
+
+def _create_open_motion_executor(
+    config: AgentConfig,
+    settings: OpenMotionSettings,
+    runtime: AgentServerRuntime,
+    telemetry_fresh: Callable[[], bool],
+    set_command_readiness: Callable[[Callable[[], bool]], None],
+) -> MockExecutionExecutor | None:
+    """Return the ``controlled_motion_open`` executor, or ``None`` for heartbeat-only."""
+    try:
+        trial = create_open_motion_executor(
+            robot_id=UUID(config.robot_id),
+            physical_execution_enabled=True,
+            settings=settings,
+            telemetry_fresh=telemetry_fresh,
+            network_interface=config.network_interface,
+        )
+    except PhysicalExecutionBlockedError as exc:
+        _publish_blocked(runtime, config, tuple(str(exc).split(": ", 1)[-1].split(", ")))
+        return None
+    except Exception as exc:
+        _publish_blocked(
+            runtime,
+            config,
+            (f"SDK_COMMAND_CLIENT_INITIALIZATION_FAILED:{safe_exception_type(exc)}",),
+        )
+        return None
+
+    guard = trial.guard
+
+    def command_ready() -> bool:
+        return guard.available() and runtime.active_execution_id is None
+
+    def physical_status() -> dict[str, object]:
+        if guard.expired():
+            return {
+                "enabled": True,
+                "state": "BLOCKED",
+                "reasons": ["TRIAL_EXPIRED"],
+                "configIssues": [],
+                "mode": settings.mode,
+                "trial": guard.snapshot(),
+            }
+        ready = command_ready() and telemetry_fresh() is True
+        return {
+            "enabled": True,
+            "state": "READY" if ready else "NOT_READY",
+            "reasons": [],
+            "configIssues": [],
+            "mode": settings.mode,
+            "linearSpeedMetersPerSecond": settings.linear_speed_meters_per_second,
+            "maxMoveMetersPerCommand": settings.max_move_meters_per_command,
+            "maxTotalMoveMeters": settings.max_total_move_meters,
+            "turnRateDegreesPerSecond": settings.turn_rate_degrees_per_second,
+            "maxTurnDegreesPerCommand": settings.max_turn_degrees_per_command,
+            "maxTotalSeconds": settings.max_total_seconds,
+            "postureSettleSeconds": settings.posture_settle_seconds,
+            "presetSettleSeconds": settings.preset_settle_seconds,
+            "allowedCommands": sorted(settings.allowed_commands),
+            "allowedPresets": sorted(settings.allowed_presets),
+            "turnLeftYawSign": settings.turn_left_yaw_sign,
+            "trial": guard.snapshot(),
+        }
+
+    set_command_readiness(command_ready)
+    runtime.set_physical_execution_status(physical_status)
+    log_event(
+        logger,
+        logging.WARNING,
+        PHYSICAL_EXECUTION_ENABLED,
+        trial_mode=settings.mode,
+        expires_at=settings.expires_at.isoformat(),
         approval_ref=settings.approval_ref,
     )
     return trial.executor

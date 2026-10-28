@@ -8,11 +8,18 @@ phase only provides the dependency-injected fake implementation.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
-from poppy_agent.command import CommandType, Posture, PostureParameters
+from poppy_agent.command import (
+    CommandType,
+    Posture,
+    PostureParameters,
+    PresetParameters,
+    WaitParameters,
+)
 from poppy_agent.execution.cancellation import (
     ExecutionCancellationToken,
     ExecutionCancelledError,
@@ -20,6 +27,8 @@ from poppy_agent.execution.cancellation import (
 from poppy_agent.execution.motion import MotionExecutionStrategy, MotionPlan, MotionSleeper
 from poppy_agent.hardware.boundary import HardwareCommandIntent, HardwareCommandPort
 from poppy_agent.observability import (
+    EXECUTION_PHYSICAL_ACTION_FINISHED,
+    EXECUTION_PHYSICAL_ACTION_STARTED,
     EXECUTION_PHYSICAL_TRIAL_LOCKED,
     EXECUTION_PHYSICAL_TURN_FINISHED,
     EXECUTION_PHYSICAL_TURN_STARTED,
@@ -28,7 +37,11 @@ from poppy_agent.observability import (
 )
 
 if TYPE_CHECKING:
+    from poppy_agent.execution.open_motion import OpenMotionGuard
     from poppy_agent.execution.trial import TrialGuard
+
+# Interruptible wait used for WAIT, posture settle and preset settle.
+ActionWaiter = Callable[[float, "ExecutionCancellationToken | None"], None]
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +154,22 @@ class FakeUnitreeCommandClient:
         return self._operation_result
 
 
+@dataclass(frozen=True, slots=True)
+class OpenMotionActions:
+    """Open trial action timing; posture/preset completion has no SDK signal.
+
+    The SDK reports no posture or preset completion, so the backend waits a
+    configured fixed settle time after each and then calls ``BalanceStand`` so
+    a following ``Move`` is accepted.
+    """
+
+    waiter: ActionWaiter
+    posture_settle_seconds: float
+    preset_settle_seconds: float
+    preset_methods: Mapping[str, str]
+    guard: OpenMotionGuard
+
+
 class UnitreeCommandBackend(HardwareCommandPort):
     """Map only explicitly safe protocol cases to a client abstraction.
 
@@ -159,11 +188,13 @@ class UnitreeCommandBackend(HardwareCommandPort):
         motion_strategy: MotionExecutionStrategy | None = None,
         sleeper: MotionSleeper | None = None,
         trial_guard: TrialGuard | None = None,
+        open_actions: OpenMotionActions | None = None,
     ) -> None:
         self._client = client
         self._motion_strategy = motion_strategy
         self._sleeper = sleeper
         self._trial_guard = trial_guard
+        self._open_actions = open_actions
         self._initialized = False
 
     @property
@@ -180,6 +211,8 @@ class UnitreeCommandBackend(HardwareCommandPort):
         """Return explicit direct-mapping support only."""
         if command_type in self._SUPPORTED_COMMANDS:
             return True
+        if command_type is CommandType.PRESET:
+            return self._open_actions is not None
         return (
             command_type in {CommandType.MOVE, CommandType.TURN}
             and self._motion_strategy is not None
@@ -226,9 +259,16 @@ class UnitreeCommandBackend(HardwareCommandPort):
                 f"Unitree command mapping is unsupported for {intent.type.value}"
             )
         if intent.type is CommandType.WAIT:
+            if self._open_actions is not None:
+                if not isinstance(intent.parameters, WaitParameters):
+                    raise UnitreeCommandBackendError("WAIT intent does not have typed parameters")
+                self._open_actions.waiter(intent.parameters.duration_seconds, cancellation_token)
             return False
         if intent.type is CommandType.STOP:
             return True
+        if intent.type is CommandType.PRESET:
+            self._dispatch_preset(intent, cancellation_token)
+            return False
         if intent.type in {CommandType.MOVE, CommandType.TURN}:
             # An injected sleeper keeps the legacy single-call timing; otherwise
             # the client must stream the motion and own its duration.
@@ -252,6 +292,9 @@ class UnitreeCommandBackend(HardwareCommandPort):
             return False
         if not isinstance(intent.parameters, PostureParameters):
             raise UnitreeCommandBackendError("POSTURE intent does not have typed parameters")
+        if self._open_actions is not None:
+            self._dispatch_open_posture(intent.parameters.posture, cancellation_token)
+            return False
         if intent.parameters.posture is Posture.SIT:
             result = self._client.sit()
         else:
@@ -261,6 +304,91 @@ class UnitreeCommandBackend(HardwareCommandPort):
                 f"Unitree client reported failure for {intent.parameters.posture.value}"
             )
         return False
+
+    def _dispatch_open_posture(
+        self, posture: Posture, cancellation_token: ExecutionCancellationToken | None
+    ) -> None:
+        """SIT = Sit + settle.  STAND = StandUp + settle + BalanceStand."""
+        actions = self._open_actions
+        assert actions is not None
+        operations = ("Sit",) if posture is Posture.SIT else ("StandUp", "BalanceStand")
+        self._log_action_started(posture.value, operations)
+        try:
+            if posture is Posture.SIT:
+                actions.guard.note_sit_requested()
+                self._require_client_ok(self._client.sit(), "Sit")
+                actions.waiter(actions.posture_settle_seconds, cancellation_token)
+            else:
+                self._require_client_ok(self._client.stand_up(), "StandUp")
+                actions.waiter(actions.posture_settle_seconds, cancellation_token)
+                self._require_client_ok(self._balance_stand(), "BalanceStand")
+                actions.guard.note_stand_completed()
+        except ExecutionCancelledError:
+            self._log_action_finished(posture.value, "CANCELLED")
+            raise
+        except Exception as exc:
+            actions.guard.lock(f"{posture.value} outcome unknown: {safe_exception_type(exc)}")
+            self._log_action_finished(posture.value, "FAILED", exc)
+            raise
+        self._log_action_finished(posture.value, "COMPLETED")
+
+    def _dispatch_preset(
+        self, intent: HardwareCommandIntent, cancellation_token: ExecutionCancellationToken | None
+    ) -> None:
+        """Allow-listed preset + settle + BalanceStand; unknown codes are rejected."""
+        actions = self._open_actions
+        if actions is None or not isinstance(intent.parameters, PresetParameters):
+            raise UnitreeCommandBackendError("PRESET is unsupported")
+        code = intent.parameters.preset_code
+        method_name = actions.preset_methods.get(code)
+        preset = getattr(self._client, "preset", None)
+        if method_name is None or not callable(preset):
+            raise UnitreeCommandBackendError("PRESET code is not mapped")
+        self._log_action_started(code, (method_name, "BalanceStand"))
+        try:
+            self._require_client_ok(preset(method_name), method_name)
+            actions.waiter(actions.preset_settle_seconds, cancellation_token)
+            self._require_client_ok(self._balance_stand(), "BalanceStand")
+        except ExecutionCancelledError:
+            self._log_action_finished(code, "CANCELLED")
+            raise
+        except Exception as exc:
+            actions.guard.lock(f"PRESET {code} outcome unknown: {safe_exception_type(exc)}")
+            self._log_action_finished(code, "FAILED", exc)
+            raise
+        self._log_action_finished(code, "COMPLETED")
+
+    def _balance_stand(self) -> object:
+        balance_stand = getattr(self._client, "balance_stand", None)
+        if not callable(balance_stand):
+            raise UnitreeCommandBackendError("Unitree client does not provide BalanceStand")
+        return balance_stand()
+
+    @staticmethod
+    def _require_client_ok(result: object, operation: str) -> None:
+        if result is not True:
+            raise UnitreeCommandBackendError(f"Unitree client reported failure for {operation}")
+
+    def _log_action_started(self, action: str, operations: tuple[str, ...]) -> None:
+        log_event(
+            logger,
+            logging.INFO,
+            EXECUTION_PHYSICAL_ACTION_STARTED,
+            action=action,
+            sdk_operations=",".join(operations),
+        )
+
+    def _log_action_finished(
+        self, action: str, status: str, exc: BaseException | None = None
+    ) -> None:
+        log_event(
+            logger,
+            logging.ERROR if status == "FAILED" else logging.INFO,
+            EXECUTION_PHYSICAL_ACTION_FINISHED,
+            action=action,
+            execution_status=status,
+            error_type=safe_exception_type(exc) if exc is not None else None,
+        )
 
     def _dispatch_streaming_motion(
         self,
@@ -276,7 +404,8 @@ class UnitreeCommandBackend(HardwareCommandPort):
             EXECUTION_PHYSICAL_TURN_STARTED,
             command_type=plan.command_type.value,
             direction=plan.direction.value,
-            angle_degrees=plan.magnitude,
+            angle_degrees=plan.magnitude if plan.command_type is CommandType.TURN else None,
+            distance_meters=plan.magnitude if plan.command_type is CommandType.MOVE else None,
             duration_seconds=plan.duration_seconds,
             trial_state=trial.state.value if trial is not None else None,
             trial_commands_used=trial.commands_used if trial is not None else None,
@@ -293,6 +422,10 @@ class UnitreeCommandBackend(HardwareCommandPort):
             self._log_motion_finished(plan, "CANCELLED")
             raise
         except Exception as exc:
+            if self._open_actions is not None:
+                self._open_actions.guard.lock(
+                    f"{plan.command_type.value} outcome unknown: {safe_exception_type(exc)}"
+                )
             if self._trial_guard is not None:
                 self._trial_guard.lock(f"{plan.command_type.value} outcome unknown")
                 log_event(
@@ -317,7 +450,9 @@ class UnitreeCommandBackend(HardwareCommandPort):
             execution_status=status,
             command_type=plan.command_type.value,
             direction=plan.direction.value,
-            angle_degrees=plan.magnitude,
+            angle_degrees=plan.magnitude if plan.command_type is CommandType.TURN else None,
+            distance_meters=plan.magnitude if plan.command_type is CommandType.MOVE else None,
+            vx=getattr(command, "vx", None),
             vyaw=getattr(command, "vyaw", None),
             duration_seconds=plan.duration_seconds,
             elapsed_seconds=getattr(trace, "elapsed_seconds", None),
@@ -339,6 +474,8 @@ class UnitreeCommandBackend(HardwareCommandPort):
 
 
 __all__ = [
+    "ActionWaiter",
+    "OpenMotionActions",
     "FakeUnitreeCall",
     "FakeUnitreeCommandClient",
     "UnitreeCommandBackend",
