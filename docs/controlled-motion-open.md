@@ -70,6 +70,7 @@
 ## 실기 기록
 
 - [2026-10-28](trial-records/2026-10-28.md): TURN·MOVE·SIT→STAND→MOVE 실행, yaw `+1` 검증.
+- [2026-10-29](trial-records/2026-10-29.md): r7 `RiseSit` 첫 실행(3회 성공), PRESET `HEART` 성공.
 
 ## 배포·전환 (운영자 TTY)
 
