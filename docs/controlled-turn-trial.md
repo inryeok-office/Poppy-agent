@@ -68,6 +68,37 @@ Issue #92. 장비 책임자(교사) 입회 하에 GO2 EDU 한 대로 왼쪽 6° 
   생성됨), telemetry fresh, trial budget 남음, 실행 중이 아님, active execution 없음.
   하나라도 아니면 `UNAVAILABLE`. budget 소진·LOCKED 후에는 계속 `UNAVAILABLE`이다.
 
+## boot gate(ExecStartPre)
+
+운영 unit의 `ExecStartPre` boot gate(`/usr/local/libexec/poppy-agent-boot-gate.sh`)는 원래
+`POPPY_ENABLE_PHYSICAL_EXECUTION`이 정확히 `false`가 아니면 Agent 시작을 거부한다. r5 배포
+스크립트는 이 검사를 바꾸지 않으므로, physical=true로 재시작하기 전에 trial용 boot gate를 먼저
+설치해야 한다(r5 첫 시험에서 gate가 시작을 거부해 확인됨, 로봇 명령 없음).
+
+trial boot gate는 physical=true를 다음을 모두 만족할 때만 허용하고, 허용 시 journal에
+`WARNING: physical execution enabled for controlled_turn_v1 trial`을 한 줄 남긴다. 그 외에는
+기존과 같이 `ERROR: physical execution must be false.`로 거부한다. NIC·route·Server health
+검사는 그대로다.
+
+- 시험 키 9개가 모두 비어 있지 않게 설정됨
+- `POPPY_PHYSICAL_TRIAL_MODE=controlled_turn_v1`, `POPPY_PHYSICAL_MAX_COMMANDS=1`,
+  `POPPY_PHYSICAL_ALLOWED_COMMANDS=TURN`, `POPPY_PHYSICAL_MAX_TURN_DEG_PER_COMMAND=6` 정확히 일치
+
+boot gate는 service user로 실행되고 EnvironmentFile 디렉터리는 root 전용이라, gate는 systemd가
+넘긴 실제 환경값만 검사한다. EnvironmentFile의 키별 줄 수(각 1줄, `POPPY_PHYSICAL_*` 총 9줄)는
+재시작 직전 root가 읽기 전용 사전 확인 스크립트로 검사한다(값은 출력하지 않는다).
+
+절차(모두 운영자 TTY):
+
+1. `sudo bash /home/poppy/prepared/poppy-agent-boot-gate-trial-apply.sh`: 기존 gate를
+   `/root/poppy-agent-backups/<시각>-boot-gate-trial-prechange/`에 백업하고, 원본과 같은
+   소유자·권한으로 새 gate를 설치한 뒤 `bash -n`과 physical=false 상태의 gate 1회 실행(exit 0)을
+   확인한다. Agent는 재시작하지 않는다. 실패하면 백업으로 자동 복원한다.
+2. physical=true로 바꾼 뒤 `sudo bash /home/poppy/prepared/poppy-agent-trial-env-precheck.sh true`가
+   `RESULT: OK`일 때만 재시작한다.
+3. 시험 후 physical=false로 되돌리고 `... precheck.sh false`로 확인한 뒤 재시작한다.
+4. gate 되돌리기: 적용 스크립트가 출력한 `revert:` 명령(백업에서 `install -p`로 복원).
+
 ## r5에서 r4로 롤백할 때
 
 r5가 Server에 등록되면 GO2EDU001의 capability 목록에 `COMMAND_TURN` 키가 추가될 수 있다.
