@@ -74,8 +74,9 @@ _YAW_RATE_FLOAT_TOLERANCE = 1e-12
 class Go2TurnRateMapper:
     """Map a TURN plan to ``Move(0, 0, vyaw)`` with an explicit LEFT yaw sign.
 
-    ``turn_left_yaw_sign`` comes from configuration because the physical yaw
-    direction of a positive SDK value has not been verified by this project.
+    ``turn_left_yaw_sign`` stays a configuration value.  ``+1`` (positive
+    ``vyaw`` turns counter-clockwise, i.e. LEFT) was verified on hardware on
+    2026-10-28; re-verify after firmware or hardware changes.
     """
 
     turn_left_yaw_sign: int
@@ -256,6 +257,10 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
     def stand_up(self) -> bool:
         """Call the official ``StandUp`` operation after initialization."""
         return self._call_operation("StandUp")
+
+    def rise_sit(self) -> bool:
+        """Call the official ``RiseSit`` operation (recovery from ``Sit``)."""
+        return self._call_operation("RiseSit")
 
     def balance_stand(self) -> bool:
         """Call the official ``BalanceStand`` operation after initialization."""

@@ -137,6 +137,9 @@ class FakeSportClient:
     def BalanceStand(self) -> int:
         return self._record("BalanceStand")
 
+    def RiseSit(self) -> int:
+        return self._record("RiseSit")
+
     def Hello(self) -> int:
         return self._record("Hello")
 
@@ -335,8 +338,18 @@ def test_sit_and_stand_use_settle_and_balance_stand() -> None:
     result = run(build(clock, sport), posture(Posture.SIT), wait(1), posture(Posture.STAND))
 
     assert result.status is ExecutionStatus.COMPLETED
-    assert sport.names() == ["Sit", "StandUp", "BalanceStand"]
+    assert sport.names() == ["Sit", "RiseSit"]
     assert clock.waits == [3.0, 1.0, 3.0]
+
+
+def test_stand_when_already_standing_uses_stand_up_and_balance_stand() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    result = run(build(clock, sport), posture(Posture.STAND), move(0.5))
+
+    assert result.status is ExecutionStatus.COMPLETED
+    assert sport.names()[:3] == ["StandUp", "BalanceStand", "Move"]
+    assert clock.waits[0] == 3.0
 
 
 def test_preset_calls_mapped_sdk_method_then_settle_and_balance_stand() -> None:
@@ -415,7 +428,7 @@ def test_exactly_four_meters_and_stand_after_sit_are_allowed() -> None:
     sport.calls.clear()
     result = run(trial, posture(Posture.SIT), posture(Posture.STAND), move(0.5), STOP)
     assert result.status is ExecutionStatus.COMPLETED
-    assert sport.names()[:3] == ["Sit", "StandUp", "BalanceStand"]
+    assert sport.names()[:3] == ["Sit", "RiseSit", "Move"]
 
 
 def test_sit_persists_across_executions_until_stand() -> None:
@@ -427,7 +440,9 @@ def test_sit_persists_across_executions_until_stand() -> None:
     blocked = run(trial, move(0.5))
     assert blocked.status is ExecutionStatus.FAILED
     assert "after SIT" in (blocked.failure_reason or "")
+    sport.calls.clear()
     assert run(trial, posture(Posture.STAND), move(0.5)).status is ExecutionStatus.COMPLETED
+    assert sport.names()[:2] == ["RiseSit", "Move"]
 
 
 def test_executions_are_unlimited_and_budget_resets_each_execution() -> None:

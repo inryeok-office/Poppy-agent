@@ -164,6 +164,10 @@ class OpenMotionGuard:
         with self._lock:
             self._sitting = True
 
+    def sitting(self) -> bool:
+        with self._lock:
+            return self._sitting
+
     def note_stand_completed(self) -> None:
         with self._lock:
             self._sitting = False

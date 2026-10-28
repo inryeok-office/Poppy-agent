@@ -308,16 +308,31 @@ class UnitreeCommandBackend(HardwareCommandPort):
     def _dispatch_open_posture(
         self, posture: Posture, cancellation_token: ExecutionCancellationToken | None
     ) -> None:
-        """SIT = Sit + settle.  STAND = StandUp + settle + BalanceStand."""
+        """SIT = Sit + settle.  STAND after SIT = RiseSit + settle; otherwise
+        StandUp + settle + BalanceStand.
+
+        ``RiseSit`` after ``Sit`` follows the SDK example
+        (unitree_sdk2py/test/client/sport_client_example.py:72, :81).
+        """
         actions = self._open_actions
         assert actions is not None
-        operations = ("Sit",) if posture is Posture.SIT else ("StandUp", "BalanceStand")
+        rise_from_sit = posture is Posture.STAND and actions.guard.sitting()
+        if posture is Posture.SIT:
+            operations: tuple[str, ...] = ("Sit",)
+        elif rise_from_sit:
+            operations = ("RiseSit",)
+        else:
+            operations = ("StandUp", "BalanceStand")
         self._log_action_started(posture.value, operations)
         try:
             if posture is Posture.SIT:
                 actions.guard.note_sit_requested()
                 self._require_client_ok(self._client.sit(), "Sit")
                 actions.waiter(actions.posture_settle_seconds, cancellation_token)
+            elif rise_from_sit:
+                self._require_client_ok(self._rise_sit(), "RiseSit")
+                actions.waiter(actions.posture_settle_seconds, cancellation_token)
+                actions.guard.note_stand_completed()
             else:
                 self._require_client_ok(self._client.stand_up(), "StandUp")
                 actions.waiter(actions.posture_settle_seconds, cancellation_token)
@@ -357,6 +372,12 @@ class UnitreeCommandBackend(HardwareCommandPort):
             self._log_action_finished(code, "FAILED", exc)
             raise
         self._log_action_finished(code, "COMPLETED")
+
+    def _rise_sit(self) -> object:
+        rise_sit = getattr(self._client, "rise_sit", None)
+        if not callable(rise_sit):
+            raise UnitreeCommandBackendError("Unitree client does not provide RiseSit")
+        return rise_sit()
 
     def _balance_stand(self) -> object:
         balance_stand = getattr(self._client, "balance_stand", None)
