@@ -68,6 +68,28 @@ Issue #92. 장비 책임자(교사) 입회 하에 GO2 EDU 한 대로 왼쪽 6° 
   생성됨), telemetry fresh, trial budget 남음, 실행 중이 아님, active execution 없음.
   하나라도 아니면 `UNAVAILABLE`. budget 소진·LOCKED 후에는 계속 `UNAVAILABLE`이다.
 
+## r5에서 r4로 롤백할 때
+
+r5가 Server에 등록되면 GO2EDU001의 capability 목록에 `COMMAND_TURN` 키가 추가될 수 있다.
+Server의 `RobotManagementService`는 재등록 시 Agent가 보고하는 capability 집합이 Robot에
+등록된 키 집합을 포함하는지 검사한다. r4는 `COMMAND_TURN`을 보고하지 않으므로 이 키가
+남아 있으면 r4 재등록이 실패할 수 있다.
+
+자동 롤백은 백업의 r4 release, unit/drop-in 및 EnvironmentFile을 복원한다. r5 등록 성공이
+확인됐거나 등록 여부를 확정할 수 없으면 r4를 자동 시작하지 않고 중지 상태로 둔다. 롤백
+출력의 **ACTION REQUIRED BEFORE STARTING R4** 안내를 따른다.
+
+1. 관리자 TTY에서 `/home/poppy/prepared/poppy-robot-command-turn-capability.py remove`를
+   실행한다. 이 모드는 GO2EDU001을 GET한 뒤 현재 목록에서 `COMMAND_TURN` 항목만 제거한
+   전체 목록을 PATCH하고 다시 GET해 확인한다.
+2. `COMMAND_TURN`이 목록에서 사라졌고 나머지 capability 항목이 보존됐는지 확인한다.
+3. 그 후에만 승인된 절차로 r4 Agent를 시작한다.
+
+`revert`는 `COMMAND_TURN` 상태를 `UNVERIFIED`로 바꿀 뿐 키 자체를 제거하지 않는다. 따라서
+r4 재등록 호환성 복구에는 `revert`가 아니라 `remove`를 사용해야 한다. 자동 롤백에서 등록
+거부가 명확히 확인된 경우에만 기존 절차대로 r4 시작을 시도한다. 로그 증거가 없거나
+불명확한 경우도 등록 가능성이 남은 것으로 보고 자동 시작을 보류한다.
+
 ## 상태 파일
 
 `POPPY_RUNTIME_STATUS_PATH`의 JSON에 `physicalExecution`이 추가된다.
