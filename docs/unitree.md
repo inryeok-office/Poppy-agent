@@ -129,7 +129,7 @@ Poppy's current contract deliberately records the following decisions:
 | --- | --- | --- | --- |
 | WAIT | no client operation | execution-level only | handled without hardware call |
 | MOVE | `Move(vx, vy, vyaw)` shape | no | explicit fake-only planning is possible; physical distance-to-velocity mapping remains unresolved |
-| TURN | `Move(vx, vy, vyaw)` yaw component | controlled trial only | `controlled_turn_v1` streams `Move(0, 0, vyaw)` and always sends `StopMove`; see [`controlled-turn-trial.md`](controlled-turn-trial.md). Yaw sign is configured, not yet verified |
+| TURN | `Move(vx, vy, vyaw)` yaw component | controlled trial only | `controlled_turn_v1` streams `Move(0, 0, vyaw)` and always sends `StopMove`; see [`controlled-turn-trial.md`](controlled-turn-trial.md). Yaw sign is configured; `+1` verified on hardware on 2026-10-28 (RIGHT turned clockwise seen from above) |
 | STOP | no client operation | no physical mapping | program STOP terminates dispatch; it is not `StopMove` or E-stop |
 | POSTURE/SIT | `Sit`-shaped client operation | contract only | Fake client records the mapping; hardware enablement remains gated |
 | POSTURE/STAND | `StandUp`-shaped client operation | contract only | Fake client records the mapping; hardware enablement remains gated |

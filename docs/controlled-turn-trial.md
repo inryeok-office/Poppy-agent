@@ -14,7 +14,7 @@ Issue #92. 장비 책임자(교사) 입회 하에 GO2 EDU 한 대로 왼쪽 6° 
 | `POPPY_PHYSICAL_MAX_TOTAL_SECONDS` | `60` | 관리자 원문(사용자 전달) | 60 이하 |
 | `POPPY_PHYSICAL_MAX_COMMANDS` | `1` | 시험 제안값 | 1 이상 정수 |
 | `POPPY_PHYSICAL_ALLOWED_COMMANDS` | `TURN` | 시험 범위 | 정확히 `TURN` |
-| `POPPY_PHYSICAL_TURN_LEFT_YAW_SIGN` | `+1` 또는 `-1` | 아래 "yaw 부호" 참고 | `+1`/`-1` |
+| `POPPY_PHYSICAL_TURN_LEFT_YAW_SIGN` | `+1` | 2026-10-28 실기 검증(아래 "yaw 부호") | `+1`/`-1` |
 | `POPPY_PHYSICAL_APPROVAL_REF` | 승인 기록 식별자 | 장비 책임자 승인 | 출력 가능 문자 120자 이하 |
 
 - 관리자 원문의 선속도 상한 3 m/s는 TURN에 쓰지 않는다(TURN의 선속도는 0).
@@ -25,9 +25,12 @@ Issue #92. 장비 책임자(교사) 입회 하에 GO2 EDU 한 대로 왼쪽 6° 
 
 ## yaw 부호
 
-`LEFT → vyaw = +rate × SIGN`, `RIGHT → vyaw = -rate × SIGN`. 양수 `vyaw`가 실제로 반시계(왼쪽)
-회전인지는 이 프로젝트에서 장비로 확인하지 않았다. `+1`은 일반 관례에 따른 **미검증 가정**이며,
-시험 결과로 관찰된 방향을 아래 기록 절에 남긴 뒤 이 문서를 갱신한다.
+`LEFT → vyaw = +rate × SIGN`, `RIGHT → vyaw = -rate × SIGN`.
+
+**`+1`, 2026-10-28 실기 검증.** `controlled_motion_open` 시험에서 웹 블록 "오른쪽 30°"
+(`TURN RIGHT`, SIGN `+1` → `vyaw` 음수)를 실행했을 때 GO2 EDU가 위에서 볼 때 시계 방향(오른쪽)으로
+회전했다. 따라서 양수 `vyaw`는 반시계(왼쪽) 회전이며 `POPPY_PHYSICAL_TURN_LEFT_YAW_SIGN=+1`이
+맞다. 이 값은 설정으로 유지한다(펌웨어·장비가 바뀌면 다시 검증한다).
 
 ## 실행 경로
 
@@ -169,7 +172,7 @@ Move/StopMove 횟수, trial 잔여 budget, approval ref를 남긴다. 토큰 등
 | `POPPY_PHYSICAL_PRESET_SETTLE_SECONDS` | `5` | 15 |
 | `POPPY_PHYSICAL_ALLOWED_COMMANDS` | `MOVE,TURN,POSTURE,PRESET` | 이 네 값의 부분집합 |
 | `POPPY_PHYSICAL_ALLOWED_PRESETS` | `HELLO,STRETCH,HEART,DANCE1` | 아래 매핑 표의 부분집합 |
-| `POPPY_PHYSICAL_TURN_LEFT_YAW_SIGN` | `+1` 또는 `-1` | `+1`/`-1` |
+| `POPPY_PHYSICAL_TURN_LEFT_YAW_SIGN` | `+1` (2026-10-28 실기 검증) | `+1`/`-1` |
 | `POPPY_PHYSICAL_APPROVAL_REF` | 승인 기록 식별자 | 출력 가능 120자 |
 | `POPPY_PHYSICAL_TRIAL_EXPIRES_AT` | 만료 시각(ISO 8601, offset 필수) | 시작 시점 기준 미래, 2시간 5분 이내 |
 
@@ -195,7 +198,8 @@ Move/StopMove 횟수, trial 잔여 budget, approval ref를 남긴다. 토큰 등
 | MOVE FORWARD/BACKWARD | `Move(±speed, 0, 0)` 50 ms 반복, 종료·취소·예외 시 `StopMove` 3회 | `sport_client.py:132` |
 | TURN LEFT/RIGHT | `Move(0, 0, ±rate×SIGN)` 동일 | `sport_client.py:132` |
 | POSTURE SIT | `Sit` → settle 대기 | `sport_client.py:142` |
-| POSTURE STAND | `StandUp` → settle 대기 → `BalanceStand` | `sport_client.py:101`, `:87` |
+| POSTURE STAND (직전 자세 SIT) | `RiseSit` → settle 대기 | `sport_client.py:149`, 예제 `sport_client_example.py:72`, `:81` |
+| POSTURE STAND (그 외) | `StandUp` → settle 대기 → `BalanceStand` | `sport_client.py:101`, `:87` |
 | PRESET HELLO | `Hello` → settle → `BalanceStand` | `sport_client.py:164` (API 1016) |
 | PRESET STRETCH | `Stretch` → settle → `BalanceStand` | `sport_client.py:171` (API 1017) |
 | PRESET DANCE1 | `Dance1` → settle → `BalanceStand` | `sport_client.py:185` (API 1022) |
@@ -206,8 +210,9 @@ Move/StopMove 횟수, trial 잔여 budget, approval ref를 남긴다. 토큰 등
   `HandStand` 등)은 매핑하지 않으며 SDK client도 allow-list 밖 메서드를 호출하지 않는다.
 - SDK 소스에는 자세·preset 완료 신호와 `StandUp` 후 `Move` 수신 조건에 대한 설명이 없다
   (`sport_client.py`는 RPC 래퍼뿐). 그래서 고정 settle 대기 후 `BalanceStand`를 호출한다. 이 순서가
-  필요한지는 장비에서 확인되지 않은 가정이다. SDK 테스트 예제는 `Sit` 다음에 `RiseSit`을 쓴다
-  (`unitree_sdk2py/test/client/sport_client_example.py:72`, `:81`).
+  필요한지는 장비에서 확인되지 않은 가정이다. SIT 직후의 STAND는 SDK 테스트 예제가 `Sit` 다음에
+  `RiseSit`을 쓰는 것(`unitree_sdk2py/test/client/sport_client_example.py:72`, `:81`)을 따라
+  `RiseSit`으로 매핑한다. 직전 자세는 Agent 프로세스가 추적한 값(SIT 전송 시점부터 앉음)이다.
 - RPC timeout은 공식 예제와 같은 10 s(`example/go2/high_level/go2_sport_client.py:84`), SDK 기본은
   1 s(`rpc/client_base.py:20`).
 - capability는 항상 `TELEMETRY`, `COMMAND_TURN`, `COMMAND_MOVE`, `COMMAND_STOP`,
