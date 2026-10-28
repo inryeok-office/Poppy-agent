@@ -101,11 +101,12 @@ class AgentOperationalSnapshot:
     last_server_success_at: datetime | None
     last_heartbeat_success_at: datetime | None
     telemetry: LocalTelemetryEvidence | None = None
+    physical_execution: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable camelCase JSON representation."""
 
-        return {
+        result: dict[str, object] = {
             "schemaVersion": self.schema_version,
             "observedAt": self.observed_at.isoformat(),
             "lifecycleState": self.lifecycle_state.value,
@@ -123,6 +124,9 @@ class AgentOperationalSnapshot:
             "lastHeartbeatSuccessAt": _datetime_value(self.last_heartbeat_success_at),
             "telemetry": self.telemetry.to_dict() if self.telemetry is not None else None,
         }
+        if self.physical_execution is not None:
+            result["physicalExecution"] = self.physical_execution
+        return result
 
 
 class OperationalStatusTracker:

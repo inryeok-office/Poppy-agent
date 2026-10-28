@@ -69,7 +69,22 @@ class UnitreeGo2Adapter:
         self._initialized = False
         self._last_received_monotonic: float | None = None
         self._telemetry_snapshot: UnitreeTelemetrySnapshot | None = None
+        self._command_readiness: Callable[[], bool] | None = None
         self._lock = RLock()
+
+    def set_command_readiness(self, readiness: Callable[[], bool] | None) -> None:
+        """Install the controlled-trial check that may report READY to the Server.
+
+        Without it the adapter always reports UNAVAILABLE.  READY also requires
+        fresh telemetry, so stale state can never advertise availability.
+        """
+        with self._lock:
+            self._command_readiness = readiness
+
+    def telemetry_is_fresh(self) -> bool:
+        """Return whether low-state telemetry arrived within the stale timeout."""
+        with self._lock:
+            return self._initialized and self._telemetry_is_recent_locked()
 
     def initialize(self) -> None:
         """Initialize DDS and subscribe to the official Go2 low-state topic."""
@@ -103,9 +118,17 @@ class UnitreeGo2Adapter:
             self._require_initialized()
             snapshot = self._telemetry_snapshot
             connection_status = "ONLINE" if self._telemetry_is_recent_locked() else "OFFLINE"
+            readiness = self._command_readiness
+        operational_status = "UNAVAILABLE"
+        if connection_status == "ONLINE" and readiness is not None:
+            try:
+                if readiness() is True:
+                    operational_status = "READY"
+            except Exception:
+                operational_status = "UNAVAILABLE"
         return RobotStatus(
             connection_status=connection_status,
-            operational_status="UNAVAILABLE",
+            operational_status=operational_status,
             battery_percent=(
                 snapshot.battery_percent
                 if connection_status == "ONLINE" and snapshot is not None
@@ -121,8 +144,13 @@ class UnitreeGo2Adapter:
             return self._telemetry_snapshot
 
     def capabilities(self) -> tuple[str, ...]:
+        """Always report COMMAND_TURN so registration stays compatible.
+
+        Once the Server knows COMMAND_TURN for this Robot, omitting it would fail
+        registration.  Whether a TURN may run is controlled by operational status.
+        """
         self._require_initialized()
-        return ("TELEMETRY",)
+        return ("TELEMETRY", "COMMAND_TURN")
 
     def shutdown(self) -> None:
         """Close only the read-only subscriber; no SDK command is sent."""

@@ -48,6 +48,12 @@ EXECUTION_RECONCILIATION_FAILED = "execution_reconciliation_failed"
 AUTHENTICATION_FAILURE = "authentication_failure"
 OPERATIONAL_STATUS_PUBLISH_FAILED = "operational_status_publish_failed"
 
+PHYSICAL_EXECUTION_BLOCKED = "physical_execution_blocked"
+PHYSICAL_EXECUTION_ENABLED = "physical_execution_enabled"
+EXECUTION_PHYSICAL_TURN_STARTED = "execution_physical_turn_started"
+EXECUTION_PHYSICAL_TURN_FINISHED = "execution_physical_turn_finished"
+EXECUTION_PHYSICAL_TRIAL_LOCKED = "execution_physical_trial_locked"
+
 _ALLOWED_CONTEXT = frozenset(
     {
         "agent_id",
@@ -62,6 +68,20 @@ _ALLOWED_CONTEXT = frozenset(
         "method",
         "path",
         "status_code",
+        "blocked_reasons",
+        "command_type",
+        "direction",
+        "angle_degrees",
+        "vyaw",
+        "duration_seconds",
+        "elapsed_seconds",
+        "move_calls",
+        "stop_move_calls",
+        "stop_move_successes",
+        "trial_state",
+        "trial_commands_used",
+        "trial_commands_max",
+        "approval_ref",
     }
 )
 

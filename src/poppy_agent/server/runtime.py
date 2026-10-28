@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -104,6 +105,13 @@ class AgentServerRuntime:
         self._status_publisher = StatusSnapshotPublisher(
             getattr(config, "runtime_status_path", None)
         )
+        self._physical_execution_status: Callable[[], dict[str, object]] | None = None
+        self._publish_status()
+
+    def set_physical_execution_status(self, provider: Callable[[], dict[str, object]]) -> None:
+        """Include secret-free physical execution state in the local status file."""
+
+        self._physical_execution_status = provider
         self._publish_status()
 
     def operational_snapshot(self) -> AgentOperationalSnapshot:
@@ -970,6 +978,12 @@ class AgentServerRuntime:
         telemetry = self._local_telemetry_evidence()
         if telemetry is not None:
             snapshot = replace(snapshot, telemetry=telemetry)
+        if self._physical_execution_status is not None:
+            try:
+                physical = self._physical_execution_status()
+            except Exception:
+                physical = {"state": "UNKNOWN"}
+            snapshot = replace(snapshot, physical_execution=physical)
         self._status_publisher.publish(snapshot)
 
     def _local_telemetry_evidence(self) -> LocalTelemetryEvidence | None:

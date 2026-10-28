@@ -7,6 +7,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from math import isfinite
 
+from poppy_agent.config.physical_trial import (
+    PHYSICAL_TRIAL_ENVIRONMENT_KEYS,
+    PhysicalTrialSettings,
+    load_physical_trial_settings,
+)
+
 
 class ConfigurationError(ValueError):
     """Raised when required Agent configuration is missing or invalid."""
@@ -25,6 +31,8 @@ class AgentConfig:
     robot_firmware_version: str | None = None
     unitree_sdk_version: str | None = None
     unitree_telemetry_stale_timeout_seconds: float | None = None
+    physical_trial: PhysicalTrialSettings | None = None
+    physical_trial_issues: tuple[str, ...] = ()
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> AgentConfig:
@@ -67,6 +75,14 @@ class AgentConfig:
                 "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS",
             )
 
+        # Trial values never abort startup; issues are reported as BLOCKED reasons.
+        physical_trial: PhysicalTrialSettings | None = None
+        physical_trial_issues: tuple[str, ...] = ()
+        if physical_execution_enabled or any(
+            values.get(key, "").strip() for key in PHYSICAL_TRIAL_ENVIRONMENT_KEYS
+        ):
+            physical_trial, physical_trial_issues = load_physical_trial_settings(values)
+
         return cls(
             robot_mode=robot_mode,
             robot_id=robot_id,
@@ -77,6 +93,8 @@ class AgentConfig:
             robot_firmware_version=unitree_values["POPPY_ROBOT_FIRMWARE_VERSION"] or None,
             unitree_sdk_version=unitree_values["UNITREE_SDK_VERSION"] or None,
             unitree_telemetry_stale_timeout_seconds=telemetry_stale_timeout_seconds,
+            physical_trial=physical_trial,
+            physical_trial_issues=physical_trial_issues,
         )
 
 

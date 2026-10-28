@@ -55,7 +55,9 @@ requests targeting `main` or `develop`.
 - Work is merged into `develop` by squash merge through a pull request.
 - `main` is never automatically merged.
 - This project does not issue physical robot movement, posture, actuator, or motor
-  commands.
+  commands, except the TURN-only controlled trial in
+  [`docs/controlled-turn-trial.md`](docs/controlled-turn-trial.md), which a human
+  operator enables under the `AGENTS.md` exception procedure.
 - Unitree integration, when introduced, is read-only telemetry first.
 
 See `CONTRIBUTING.md`, `SECURITY.md`, and `docs/` for repository rules.
