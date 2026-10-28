@@ -23,8 +23,9 @@ MAX_TURN_DEGREES_PER_COMMAND = 360.0
 MAX_TOTAL_MOVE_METERS_PER_EXECUTION = 4.0
 MAX_TOTAL_SECONDS_PER_EXECUTION = 120.0
 MAX_SETTLE_SECONDS = 15.0
-# The approval window is two hours; a longer expiry is a configuration error.
-MAX_APPROVAL_WINDOW = timedelta(hours=2, minutes=5)
+# The approval window is at most eight hours (teacher approval extended on 2026-10-29);
+# a longer expiry is a configuration error.
+MAX_APPROVAL_WINDOW = timedelta(hours=8, minutes=5)
 
 # Server presetCode -> official Go2 SportClient method (unitree_sdk2py/go2/sport/
 # sport_client.py: Hello 1016, Stretch 1017, Dance1 1022, Heart 1036).  Jump,
@@ -219,7 +220,7 @@ def _expiry(value: str, now: datetime, issues: list[str]) -> datetime | None:
         issues.append("POPPY_PHYSICAL_TRIAL_EXPIRES_AT is not in the future")
         return None
     if parsed - now > MAX_APPROVAL_WINDOW:
-        issues.append("POPPY_PHYSICAL_TRIAL_EXPIRES_AT exceeds the two-hour approval window")
+        issues.append("POPPY_PHYSICAL_TRIAL_EXPIRES_AT exceeds the eight-hour approval window")
         return None
     return parsed
 

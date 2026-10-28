@@ -1,6 +1,8 @@
 # 시간 제한 open 모드 (`controlled_motion_open`)
 
 장비 책임자(교사)가 2026-10-28 20:20부터 2시간 동안 블록 반복 시험을 허용했다(교사 2차 승인).
+2026-10-29 교사 승인이 하루 최대 8시간으로 연장돼, 만료 시각 상한을 Agent 시작 시점 기준 8시간 5분으로 올렸다
+(boot gate·전환 스크립트도 같은 상한).
 `controlled_turn_v1`은 그대로 두고 별도 모드로 추가한다. 관리자 원문(누적 회전 360°, 선속도
 3 m/s, 60 s)과 이번 교사 승인(실행 1회 기준 총 이동 4.0 m, 총 동작 시간 120 s)은 출처가
 다르며, 아래 하드 상한은 교사 승인 값이다.
@@ -20,7 +22,7 @@
 | `POPPY_PHYSICAL_ALLOWED_PRESETS` | `HELLO,STRETCH,HEART,DANCE1` | 아래 매핑 표의 부분집합 |
 | `POPPY_PHYSICAL_TURN_LEFT_YAW_SIGN` | `+1` (2026-10-28 실기 검증) | `+1`/`-1` |
 | `POPPY_PHYSICAL_APPROVAL_REF` | 승인 기록 식별자 | 출력 가능 120자 |
-| `POPPY_PHYSICAL_TRIAL_EXPIRES_AT` | 만료 시각(ISO 8601, offset 필수) | 시작 시점 기준 미래, 2시간 5분 이내 |
+| `POPPY_PHYSICAL_TRIAL_EXPIRES_AT` | 만료 시각(ISO 8601, offset 필수) | 시작 시점 기준 미래, 8시간 5분 이내 (2026-10-29 교사 승인 최대 8시간으로 연장) |
 
 - 기본값은 없다. 누락·범위 밖이면 BLOCKED, heartbeat-only(`UNAVAILABLE`).
 - 만료 후에는 모든 실행을 거부하고 status는 `BLOCKED`(`TRIAL_EXPIRED`), operationalStatus는

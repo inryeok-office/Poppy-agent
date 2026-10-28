@@ -269,13 +269,23 @@ def test_every_open_key_is_required_without_defaults(key: str) -> None:
         ("POPPY_PHYSICAL_TRIAL_EXPIRES_AT", START.isoformat(), "not in the future"),
         (
             "POPPY_PHYSICAL_TRIAL_EXPIRES_AT",
-            (START + timedelta(hours=3)).isoformat(),
-            "two-hour approval window",
+            (START + timedelta(hours=8, minutes=6)).isoformat(),
+            "eight-hour approval window",
         ),
     ],
 )
 def test_out_of_range_open_values_are_rejected(key: str, value: str, fragment: str) -> None:
     assert any(fragment in issue for issue in issues_for(**{key: value}))
+
+
+def test_expiry_up_to_eight_hours_five_minutes_is_accepted() -> None:
+    settings = open_settings(
+        POPPY_PHYSICAL_TRIAL_EXPIRES_AT=(START + timedelta(hours=8, minutes=5)).isoformat()
+    )
+    assert settings.expires_at == START + timedelta(hours=8, minutes=5)
+    assert open_settings(
+        POPPY_PHYSICAL_TRIAL_EXPIRES_AT=(START + timedelta(hours=3)).isoformat()
+    ).expires_at == START + timedelta(hours=3)
 
 
 def test_agent_config_selects_open_mode_by_trial_mode() -> None:
