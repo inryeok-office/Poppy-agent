@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+import http.cookiejar
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -24,13 +25,9 @@ from poppy_agent.agent import create_agent  # noqa: E402
 from poppy_agent.command import (  # noqa: E402
     CommandType,
     HighLevelCommandProtocolParser,
-    MoveDirection,
-    MoveParameters,
-    Posture,
-    PostureParameters,
     StopParameters,
-    TurnDirection,
-    TurnParameters,
+    VelocityMoveParameters,
+    VelocityTurnParameters,
     WaitParameters,
 )
 from poppy_agent.config import AgentConfig  # noqa: E402
@@ -74,6 +71,8 @@ class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
 class E2EConfig:
     server_url: str
     agent_token: str
+    admin_username: str
+    admin_password: str
     timeout_seconds: float
     poll_interval_seconds: float
     http_timeout_seconds: float
@@ -82,15 +81,21 @@ class E2EConfig:
     def from_environment(cls) -> E2EConfig:
         server_url = os.environ.get("POPPY_E2E_SERVER_URL", "").strip().rstrip("/")
         agent_token = os.environ.get("POPPY_E2E_AGENT_TOKEN", "")
+        admin_username = os.environ.get("POPPY_E2E_ADMIN_USERNAME", "")
+        admin_password = os.environ.get("POPPY_E2E_ADMIN_PASSWORD", "")
         if not is_allowed_loopback_server_url(server_url):
             raise FullMockE2EError(
                 "POPPY_E2E_SERVER_URL must be an http localhost URL; production targets are blocked"
             )
         if not agent_token.strip():
             raise FullMockE2EError("POPPY_E2E_AGENT_TOKEN is required")
+        if not admin_username.strip() or not admin_password:
+            raise FullMockE2EError("QA admin credentials are required")
         return cls(
             server_url=server_url,
             agent_token=agent_token,
+            admin_username=admin_username,
+            admin_password=admin_password,
             timeout_seconds=_positive_float("POPPY_E2E_TIMEOUT_SECONDS", 30.0, maximum=120.0),
             poll_interval_seconds=_positive_float(
                 "POPPY_E2E_POLL_INTERVAL_SECONDS", 0.2, maximum=5.0
@@ -107,8 +112,43 @@ class E2EHttpClient:
     def __init__(self, base_url: str, timeout_seconds: float, secret: str) -> None:
         self._base_url = base_url
         self._timeout_seconds = timeout_seconds
-        self._secret = secret
-        self._opener = urllib.request.build_opener(_RejectRedirectHandler())
+        self._secrets = {secret}
+        self._csrf_header: str | None = None
+        self._csrf_token: str | None = None
+        self._cookies = http.cookiejar.CookieJar()
+        self._opener = urllib.request.build_opener(
+            _RejectRedirectHandler(),
+            urllib.request.HTTPCookieProcessor(self._cookies),
+        )
+
+    def login_admin(self, username: str, password: str) -> None:
+        self._secrets.add(password)
+        self.request(
+            "POST",
+            "/api/v1/admin/auth/login",
+            payload={"username": username, "password": password},
+            expected_status=200,
+        )
+        csrf = self.get("/api/v1/admin/auth/csrf")
+        header_name = csrf.get("headerName")
+        token = csrf.get("token")
+        if (
+            not isinstance(header_name, str)
+            or not header_name
+            or not isinstance(token, str)
+            or not token
+        ):
+            raise FullMockE2EError("admin CSRF response was malformed")
+        self._csrf_header = header_name
+        self._csrf_token = token
+        self._secrets.add(token)
+
+    def logout_admin(self) -> None:
+        if self._csrf_header is None or self._csrf_token is None:
+            return
+        self.request("POST", "/api/v1/admin/auth/logout", expected_status=204, admin_request=True)
+        self._csrf_header = None
+        self._csrf_token = None
 
     def post(
         self,
@@ -124,6 +164,7 @@ class E2EHttpClient:
             payload=payload,
             expected_status=expected_status,
             session_token=session_token,
+            admin_request=path.startswith("/api/v1/admin/"),
         )
 
     def get(
@@ -138,6 +179,7 @@ class E2EHttpClient:
             path,
             expected_status=expected_status,
             session_token=session_token,
+            admin_request=path.startswith("/api/v1/admin/"),
         )
 
     def patch(
@@ -147,7 +189,7 @@ class E2EHttpClient:
         *,
         expected_status: int = 200,
     ) -> dict[str, Any]:
-        return self.request("PATCH", path, payload=payload, expected_status=expected_status)
+        return self.request("PATCH", path, payload=payload, expected_status=expected_status, admin_request=True)
 
     def request(
         self,
@@ -157,10 +199,15 @@ class E2EHttpClient:
         payload: dict[str, object] | None = None,
         expected_status: int,
         session_token: str | None = None,
+        admin_request: bool = False,
     ) -> dict[str, Any]:
         headers = {"Accept": "application/json"}
         if session_token is not None:
             headers["X-Session-Token"] = session_token
+        if admin_request and method not in {"GET", "HEAD", "OPTIONS"}:
+            if self._csrf_header is None or self._csrf_token is None:
+                raise FullMockE2EError("admin request made before login")
+            headers[self._csrf_header] = self._csrf_token
         encoded = None
         if payload is not None:
             headers["Content-Type"] = "application/json"
@@ -186,6 +233,8 @@ class E2EHttpClient:
             raise FullMockE2EError(
                 f"{method} {path} returned HTTP {status}: {self._safe_text(raw)}"
             )
+        if expected_status == 204:
+            return {}
         try:
             body = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -199,7 +248,10 @@ class E2EHttpClient:
 
     def _safe_text(self, raw: bytes) -> str:
         value = raw.decode("utf-8", errors="replace")
-        return value.replace(self._secret, "<redacted>")[:1000]
+        for secret in self._secrets:
+            if secret:
+                value = value.replace(secret, "<redacted>")
+        return value[:300]
 
 
 class RecordingServerClient(ServerClient):
@@ -229,6 +281,7 @@ def main() -> int:
     runtime: AgentServerRuntime | None = None
 
     try:
+        http.login_admin(config.admin_username, config.admin_password)
         robot = http.post(
             "/api/v1/admin/robots",
             {
@@ -357,7 +410,7 @@ def main() -> int:
         parsed_program = HighLevelCommandProtocolParser().parse(delivery.command_payload)
         _assert(
             json.loads(delivery.command_payload) == _compiled_snapshot(),
-            "delivered command snapshot differs from the compiled version 1 program",
+            "delivered command snapshot differs from the compiled version 2 program",
         )
         print(
             "commandPayload strict parse confirmed: "
@@ -382,16 +435,12 @@ def main() -> int:
             CommandType.WAIT,
             CommandType.MOVE,
             CommandType.TURN,
-            CommandType.POSTURE,
-            CommandType.POSTURE,
             CommandType.STOP,
         ]
         expected_sources = [
             "wait-1",
-            "move-forward-1",
-            "turn-left-1",
-            "sit-1",
-            "stand-1",
+            "move-velocity-1",
+            "turn-velocity-1",
             "stop-1",
         ]
         _assert(
@@ -404,17 +453,15 @@ def main() -> int:
         )
         _assert(executor.events[0].parameters == WaitParameters(1.5), "WAIT parameter mismatch")
         _assert(
-            executor.events[1].parameters == MoveParameters(MoveDirection.FORWARD, 1.25),
-            "MOVE parameter mismatch",
+            executor.events[1].parameters == VelocityMoveParameters(-0.125, 1.5),
+            "v2 MOVE parameter mismatch",
         )
         _assert(
-            executor.events[2].parameters == TurnParameters(TurnDirection.LEFT, 90.0),
-            "TURN parameter mismatch",
+            executor.events[2].parameters == VelocityTurnParameters(15.5, 2.25),
+            "v2 TURN parameter mismatch",
         )
-        _assert(executor.events[3].parameters == PostureParameters(Posture.SIT), "SIT mismatch")
-        _assert(executor.events[4].parameters == PostureParameters(Posture.STAND), "STAND mismatch")
         _assert(
-            isinstance(executor.events[5].parameters, StopParameters),
+            isinstance(executor.events[3].parameters, StopParameters),
             "STOP parameter mismatch",
         )
         print("Mock trace: " + ", ".join(event.type.value for event in executor.events))
@@ -450,26 +497,25 @@ def main() -> int:
     finally:
         if runtime is not None:
             runtime.shutdown()
+        http.logout_admin()
 
 
 def _block_program() -> dict[str, object]:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "blocks": [
             {"id": "start-1", "type": "START", "parameters": {}},
             {"id": "wait-1", "type": "WAIT", "parameters": {"durationSeconds": 1.5}},
             {
-                "id": "move-forward-1",
-                "type": "MOVE_FORWARD",
-                "parameters": {"distanceMeters": 1.25},
+                "id": "move-velocity-1",
+                "type": "MOVE_VELOCITY",
+                "parameters": {"linearVelocityMetersPerSecond": -0.125, "durationSeconds": 1.5},
             },
             {
-                "id": "turn-left-1",
-                "type": "TURN_LEFT",
-                "parameters": {"angleDegrees": 90.0},
+                "id": "turn-velocity-1",
+                "type": "TURN_VELOCITY",
+                "parameters": {"angularVelocityDegreesPerSecond": 15.5, "durationSeconds": 2.25},
             },
-            {"id": "sit-1", "type": "SIT", "parameters": {}},
-            {"id": "stand-1", "type": "STAND", "parameters": {}},
             {"id": "stop-1", "type": "STOP", "parameters": {}},
             {"id": "after-stop-1", "type": "WAIT", "parameters": {"durationSeconds": 999.0}},
             {"id": "end-1", "type": "END", "parameters": {}},
@@ -479,7 +525,7 @@ def _block_program() -> dict[str, object]:
 
 def _newer_block_program() -> dict[str, object]:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "blocks": [
             {"id": "start-newer", "type": "START", "parameters": {}},
             {"id": "wait-newer", "type": "WAIT", "parameters": {"durationSeconds": 999.0}},
@@ -490,7 +536,7 @@ def _newer_block_program() -> dict[str, object]:
 
 def _compiled_snapshot() -> dict[str, object]:
     return {
-        "protocolVersion": 1,
+        "protocolVersion": 2,
         "commands": [
             {
                 "sequence": 0,
@@ -500,36 +546,24 @@ def _compiled_snapshot() -> dict[str, object]:
             },
             {
                 "sequence": 1,
-                "sourceBlockId": "move-forward-1",
+                "sourceBlockId": "move-velocity-1",
                 "type": "MOVE",
-                "parameters": {"direction": "FORWARD", "distanceMeters": 1.25},
+                "parameters": {"linearVelocityMetersPerSecond": -0.125, "durationSeconds": 1.5},
             },
             {
                 "sequence": 2,
-                "sourceBlockId": "turn-left-1",
+                "sourceBlockId": "turn-velocity-1",
                 "type": "TURN",
-                "parameters": {"direction": "LEFT", "angleDegrees": 90.0},
+                "parameters": {"angularVelocityDegreesPerSecond": 15.5, "durationSeconds": 2.25},
             },
             {
                 "sequence": 3,
-                "sourceBlockId": "sit-1",
-                "type": "POSTURE",
-                "parameters": {"posture": "SIT"},
-            },
-            {
-                "sequence": 4,
-                "sourceBlockId": "stand-1",
-                "type": "POSTURE",
-                "parameters": {"posture": "STAND"},
-            },
-            {
-                "sequence": 5,
                 "sourceBlockId": "stop-1",
                 "type": "STOP",
                 "parameters": {},
             },
             {
-                "sequence": 6,
+                "sequence": 4,
                 "sourceBlockId": "after-stop-1",
                 "type": "WAIT",
                 "parameters": {"durationSeconds": 999.0},

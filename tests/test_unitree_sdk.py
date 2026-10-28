@@ -1,9 +1,10 @@
+import math
 from uuid import UUID
 
 import pytest
 
 import poppy_agent.hardware.unitree_sdk as unitree_sdk
-from poppy_agent.command import CommandType, MoveDirection
+from poppy_agent.command import CommandType, MoveDirection, TurnDirection
 from poppy_agent.execution import (
     MotionPlan,
     MotionRateUnit,
@@ -18,7 +19,9 @@ from poppy_agent.hardware import (
     UnitreeSdkCommandClient,
     UnitreeSdkCommandError,
     UnitreeSdkUnavailableError,
+    UnitreeTurnRateMappingError,
     create_unitree_execution_executor,
+    map_go2_turn_rate_degrees_to_radians,
 )
 
 ROBOT_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -78,6 +81,24 @@ def motion_plan() -> MotionPlan:
         rate=0.5,
         rate_unit=MotionRateUnit.METERS_PER_SECOND,
         duration_seconds=2.0,
+    )
+
+
+def turn_motion_plan(
+    *,
+    direction: TurnDirection = TurnDirection.LEFT,
+    rate: object = 45.0,
+) -> MotionPlan:
+    return MotionPlan(
+        sequence=0,
+        source_block_id="turn-block",
+        command_type=CommandType.TURN,
+        direction=direction,
+        magnitude=10.0,
+        magnitude_unit=MotionUnit.DEGREES,
+        rate=rate,  # type: ignore[arg-type]
+        rate_unit=MotionRateUnit.DEGREES_PER_SECOND,
+        duration_seconds=1.0,
     )
 
 
@@ -202,6 +223,48 @@ def test_command_adapter_uses_injected_motion_mapping_without_defaults() -> None
 
     assert client.execute_motion(motion_plan()) is True
     assert sdk.calls[-1] == ("Move", (0.1, 0.0, 0.0))
+
+
+def test_go2_turn_mapper_converts_poppy_signed_rate_without_direction_claim() -> None:
+    left = map_go2_turn_rate_degrees_to_radians(turn_motion_plan(rate=45.0))
+    right = map_go2_turn_rate_degrees_to_radians(
+        turn_motion_plan(direction=TurnDirection.RIGHT, rate=45.0)
+    )
+
+    assert left.vx == 0.0
+    assert left.vy == 0.0
+    assert left.vyaw == pytest.approx(math.pi / 4)
+    assert right.vyaw == pytest.approx(-(math.pi / 4))
+
+
+def test_go2_turn_mapper_accepts_documented_yaw_rate_boundaries() -> None:
+    boundary_degrees = math.degrees(0.8)
+
+    assert map_go2_turn_rate_degrees_to_radians(
+        turn_motion_plan(rate=boundary_degrees)
+    ).vyaw == pytest.approx(0.8)
+    assert map_go2_turn_rate_degrees_to_radians(
+        turn_motion_plan(direction=TurnDirection.RIGHT, rate=boundary_degrees)
+    ).vyaw == pytest.approx(-0.8)
+
+
+@pytest.mark.parametrize(
+    "rate",
+    [0.0, -1.0, True, float("nan"), float("inf"), float("-inf")],
+)
+def test_go2_turn_mapper_rejects_invalid_rates(rate: object) -> None:
+    with pytest.raises(UnitreeTurnRateMappingError):
+        map_go2_turn_rate_degrees_to_radians(turn_motion_plan(rate=rate))
+
+
+def test_go2_turn_mapper_rejects_rate_above_documented_bound() -> None:
+    with pytest.raises(UnitreeTurnRateMappingError, match="exceeds"):
+        map_go2_turn_rate_degrees_to_radians(turn_motion_plan(rate=math.degrees(0.8) + 0.01))
+
+
+def test_go2_turn_mapper_rejects_non_turn_plan() -> None:
+    with pytest.raises(UnitreeTurnRateMappingError, match="only TURN"):
+        map_go2_turn_rate_degrees_to_radians(motion_plan())
 
 
 def test_command_adapter_normalizes_sdk_status_and_sanitizes_errors() -> None:

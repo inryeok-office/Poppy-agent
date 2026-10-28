@@ -66,6 +66,24 @@ def test_physical_execution_rejects_missing_or_invalid_policy(name: str, value: 
         AgentConfig.from_environment(_physical_environment(**{name: value}))
 
 
+def test_reported_linear_speed_does_not_supply_turn_angular_rate_policy() -> None:
+    # The user-provided 3 m/s value is a linear-speed ceiling. The 360-degree
+    # approval is cumulative across the trial, not the per-command angular-rate
+    # value required by this policy. The 1-second per-command duration is
+    # explicit but does not fill the separate angular-rate field.
+    environment = _physical_environment(
+        POPPY_PHYSICAL_MAX_LINEAR_RATE_METERS_PER_SECOND="3",
+        POPPY_PHYSICAL_MAX_COMMAND_DURATION_SECONDS="1",
+    )
+    environment.pop("POPPY_PHYSICAL_MAX_ANGULAR_RATE_DEGREES_PER_SECOND")
+
+    with pytest.raises(
+        ConfigurationError,
+        match="POPPY_PHYSICAL_MAX_ANGULAR_RATE_DEGREES_PER_SECOND",
+    ):
+        AgentConfig.from_environment(environment)
+
+
 def test_invalid_physical_execution_flag_is_rejected() -> None:
     with pytest.raises(ConfigurationError, match="POPPY_ENABLE_PHYSICAL_EXECUTION"):
         AgentConfig.from_environment(

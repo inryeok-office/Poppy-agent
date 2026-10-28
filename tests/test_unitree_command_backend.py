@@ -1,3 +1,4 @@
+from threading import Event, Thread
 from uuid import UUID
 
 import pytest
@@ -159,7 +160,7 @@ def test_motion_strategy_dispatches_plans_and_records_durations_in_fake_client()
             command(
                 1,
                 CommandType.TURN,
-                VelocityTurnParameters(-10.0, 1.0),
+                VelocityTurnParameters(-10.0, 0.5),
             ),
             command(2, CommandType.STOP, StopParameters()),
         )
@@ -168,13 +169,117 @@ def test_motion_strategy_dispatches_plans_and_records_durations_in_fake_client()
     assert result.status is ExecutionStatus.COMPLETED
     assert [call.operation for call in client.calls] == [
         UnitreeCommandOperation.MOVE,
+        UnitreeCommandOperation.STOP_MOVE,
         UnitreeCommandOperation.MOVE,
+        UnitreeCommandOperation.STOP_MOVE,
     ]
     assert client.calls[0].parameters.direction is MoveDirection.FORWARD
     assert client.calls[0].parameters.duration_seconds == 2.0  # type: ignore[union-attr]
-    assert client.calls[1].parameters.direction is TurnDirection.RIGHT
-    assert client.calls[1].parameters.duration_seconds == 1.0  # type: ignore[union-attr]
-    assert sleeper.durations == [2.0, 1.0]
+    assert client.calls[2].parameters.direction is TurnDirection.RIGHT
+    assert client.calls[2].parameters.duration_seconds == 0.5  # type: ignore[union-attr]
+    assert sleeper.durations == [2.0, 0.5]
+
+
+def test_completed_motion_requests_stop_once_and_shutdown_does_not_repeat_it() -> None:
+    client = FakeUnitreeCommandClient()
+    backend = UnitreeCommandBackend(
+        client,
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.1, 15.0)),
+        sleeper=RecordingSleeper(),
+        motion_policy=PhysicalMotionPolicy.for_test(),
+    )
+    target = HardwareCommandTarget(backend)
+    target.initialize()
+
+    result = MockExecutionExecutor(
+        target,
+        safety_policy=CommandSafetyPolicy(),
+        bound_robot_id=ROBOT_ID,
+    ).execute(task(command(0, CommandType.MOVE, VelocityMoveParameters(0.1, 2.0))))
+
+    assert result.status is ExecutionStatus.COMPLETED
+    target.shutdown()
+    assert [call.operation for call in client.calls] == [
+        UnitreeCommandOperation.MOVE,
+        UnitreeCommandOperation.STOP_MOVE,
+    ]
+
+
+def test_completed_motion_preserves_success_when_stop_request_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = FakeUnitreeCommandClient(fail_operation=UnitreeCommandOperation.STOP_MOVE)
+    backend = UnitreeCommandBackend(
+        client,
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.1, 15.0)),
+        sleeper=RecordingSleeper(),
+        motion_policy=PhysicalMotionPolicy.for_test(),
+    )
+    target = HardwareCommandTarget(backend)
+    target.initialize()
+
+    result = MockExecutionExecutor(
+        target,
+        safety_policy=CommandSafetyPolicy(),
+        bound_robot_id=ROBOT_ID,
+    ).execute(task(command(0, CommandType.TURN, VelocityTurnParameters(10.0, 1.0))))
+
+    assert result.status is ExecutionStatus.COMPLETED
+    assert [call.operation for call in client.calls] == [UnitreeCommandOperation.MOVE]
+    assert "motion_stop_request_failed" in caplog.text
+    assert "configured fake Unitree client failure" not in caplog.text
+
+
+def test_blocking_fake_motion_does_not_dispatch_following_commands_before_returning() -> None:
+    started = Event()
+    release = Event()
+
+    class BlockingFakeUnitreeClient(FakeUnitreeCommandClient):
+        def execute_motion(self, plan):  # type: ignore[no-untyped-def]
+            result = super().execute_motion(plan)
+            started.set()
+            assert release.wait(1.0)
+            return result
+
+    client = BlockingFakeUnitreeClient()
+    backend = UnitreeCommandBackend(
+        client,
+        motion_strategy=MotionExecutionStrategy(MotionProfile(0.1, 15.0)),
+        sleeper=RecordingSleeper(),
+        motion_policy=PhysicalMotionPolicy.for_test(),
+    )
+    target = HardwareCommandTarget(backend)
+    target.initialize()
+    executor = MockExecutionExecutor(
+        target,
+        safety_policy=CommandSafetyPolicy(),
+        bound_robot_id=ROBOT_ID,
+    )
+    result_box = []
+
+    worker = Thread(
+        target=lambda: result_box.append(
+            executor.execute(
+                task(
+                    command(0, CommandType.MOVE, VelocityMoveParameters(0.1, 1.0)),
+                    command(1, CommandType.STOP, StopParameters()),
+                )
+            )
+        )
+    )
+    worker.start()
+    assert started.wait(1.0)
+    assert [call.operation for call in client.calls] == [UnitreeCommandOperation.MOVE]
+
+    release.set()
+    worker.join(1.0)
+
+    assert not worker.is_alive()
+    assert result_box[0].status is ExecutionStatus.COMPLETED
+    assert [call.operation for call in client.calls] == [
+        UnitreeCommandOperation.MOVE,
+        UnitreeCommandOperation.STOP_MOVE,
+    ]
 
 
 def test_invalid_motion_plan_is_rejected_before_previous_command_dispatch() -> None:

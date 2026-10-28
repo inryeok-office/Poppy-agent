@@ -22,6 +22,7 @@ EXECUTION_STARTED = "execution_started"
 EXECUTION_COMPLETED = "execution_completed"
 EXECUTION_FAILED = "execution_failed"
 EXECUTION_CANCELLED = "execution_cancelled"
+MOTION_STOP_REQUEST_FAILED = "motion_stop_request_failed"
 
 EXECUTION_CANCELLATION_DETECTED = "execution_cancellation_detected"
 EXECUTION_CANCELLATION_REQUESTED = "execution_cancellation_requested"

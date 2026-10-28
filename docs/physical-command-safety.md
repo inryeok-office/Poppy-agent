@@ -21,8 +21,11 @@ production motion profile, or replace the vendor's physical emergency process.
 
 The installed SDK exposes `SportClient.StopMove()` (API 1003, no arguments,
 integer status result).  The adapter invokes it only as best-effort cleanup for
-an active planned MOVE/TURN on cancellation, dispatch failure, or executor
-shutdown.  Failure is retained alongside the primary failure.
+an active planned MOVE/TURN after its normal duration, on cancellation,
+dispatch failure, or executor shutdown. A normal-duration cleanup failure is
+logged as a secret-safe safety event without changing that command's primary
+successful execution result; cancellation and dispatch failures retain both
+primary and cleanup failures.
 
 `StopMove` is a transport-dependent movement stop request.  It is **not** a
 hardware emergency stop: it cannot be sent after power, Ethernet, DDS, process,
@@ -50,10 +53,12 @@ angle is approved by this document.
 
 The implementation requests StopMove at most once for an active backend motion
 and preserves both a primary dispatch/cancellation failure and any stop failure.
-It cannot interrupt a blocking vendor call that never returns; this remains a
-hardware-validation and vendor-contract requirement.  On transport loss, new
-execution must remain gated by runtime connectivity/readiness; a physical
-network-loss stop guarantee is not claimed.
+The Agent executes an execution in one worker thread. Python cancellation and
+`Future.cancel()` cannot force-stop an already-running native vendor call, and
+the current code does not claim that calling StopMove concurrently with such a
+call is safe. This remains a hardware-validation and vendor-contract blocker.
+On transport loss, new execution must remain gated by runtime
+connectivity/readiness; a physical network-loss stop guarantee is not claimed.
 
 ## Validation scope
 

@@ -7,6 +7,7 @@ phase only provides the dependency-injected fake implementation.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -22,6 +23,9 @@ from poppy_agent.execution.cancellation import ExecutionCancellationToken
 from poppy_agent.execution.motion import MotionExecutionStrategy, MotionPlan, MotionSleeper
 from poppy_agent.execution.physical_safety import PhysicalMotionPolicy
 from poppy_agent.hardware.boundary import HardwareCommandIntent, HardwareCommandPort
+from poppy_agent.observability import MOTION_STOP_REQUEST_FAILED, log_event
+
+logger = logging.getLogger(__name__)
 
 
 class UnitreeCommandOperation(StrEnum):
@@ -256,7 +260,7 @@ class UnitreeCommandBackend(HardwareCommandPort):
                     f"Unitree client reported failure for {intent.type.value}"
                 )
             self._sleeper.sleep(plan.duration_seconds, cancellation_token)
-            self._motion_active = False
+            self._request_stop_after_completed_duration()
             return False
         if not isinstance(intent.parameters, PostureParameters):
             raise UnitreeCommandBackendError("POSTURE intent does not have typed parameters")
@@ -269,6 +273,25 @@ class UnitreeCommandBackend(HardwareCommandPort):
                 f"Unitree client reported failure for {intent.parameters.posture.value}"
             )
         return False
+
+    def _request_stop_after_completed_duration(self) -> None:
+        """Request one transport-level stop after a completed motion duration.
+
+        A successful duration wait is the primary execution outcome.  A
+        best-effort StopMove failure must not rewrite that outcome, but is
+        recorded as a secret-safe structured event.  ``request_stop`` clears
+        the active flag even when the request fails, which also prevents a
+        later cancellation or shutdown from issuing a duplicate request.
+        """
+        try:
+            self.request_stop()
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                MOTION_STOP_REQUEST_FAILED,
+                error_type=type(exc).__name__,
+            )
 
     def shutdown(self) -> None:
         """Request stop for an active motion before releasing the client."""

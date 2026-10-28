@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Protocol
 
-from poppy_agent.execution.motion import MotionPlan
+from poppy_agent.command import CommandType, TurnDirection
+from poppy_agent.execution.motion import MotionPlan, MotionRateUnit, MotionUnit
 
 from .unitree import UnitreeCommandClient
 
@@ -24,6 +25,10 @@ class UnitreeSdkCommandError(RuntimeError):
 
 class UnitreeSdkUnavailableError(UnitreeSdkCommandError):
     """Raised when the optional official Unitree SDK is not installed."""
+
+
+class UnitreeTurnRateMappingError(ValueError):
+    """Raised when a Poppy TURN plan cannot be converted to GO2 yaw rate."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +54,51 @@ class UnitreeMotionMapper(Protocol):
 
     def __call__(self, plan: MotionPlan) -> UnitreeMotionCommand:
         """Return SDK arguments without inventing production defaults."""
+
+
+_GO2_AI_MOTION_MAX_YAW_RATE_RADIANS_PER_SECOND = 0.8
+_GO2_YAW_RATE_FLOAT_ROUNDING_TOLERANCE = 1e-12
+
+
+def map_go2_turn_rate_degrees_to_radians(plan: MotionPlan) -> UnitreeMotionCommand:
+    """Convert a typed Poppy v2 TURN plan to a GO2-shaped yaw-rate request.
+
+    The operator-provided Unitree AI Motion Service Interface applies to GO2
+    EDU software below V1.1.6 and specifies ``vyaw`` in rad/s with an inclusive
+    ``[-0.8, 0.8]`` range.  Poppy's positive/negative protocol convention is
+    retained numerically: LEFT is positive and RIGHT is negative.  This helper
+    does not assert which physical yaw direction a positive SDK value produces.
+
+    It is deliberately not wired into the real SDK factory.  A future reviewed
+    mapper must still establish vendor direction, expiry, transport-loss, and
+    concurrency behavior before physical execution can be enabled.
+    """
+    if plan.command_type is not CommandType.TURN:
+        raise UnitreeTurnRateMappingError("only TURN plans can map to GO2 yaw rate")
+    if plan.magnitude_unit is not MotionUnit.DEGREES:
+        raise UnitreeTurnRateMappingError("TURN magnitude must use degrees")
+    if plan.rate_unit is not MotionRateUnit.DEGREES_PER_SECOND:
+        raise UnitreeTurnRateMappingError("TURN rate must use degrees/second")
+    if not isinstance(plan.direction, TurnDirection):
+        raise UnitreeTurnRateMappingError("TURN plan must have a typed direction")
+    if type(plan.rate) not in (int, float) or not math.isfinite(float(plan.rate)):
+        raise UnitreeTurnRateMappingError("TURN rate must be a finite number")
+    if plan.rate <= 0:
+        raise UnitreeTurnRateMappingError("TURN rate must be positive")
+
+    vyaw = math.radians(float(plan.rate))
+    if math.isclose(
+        vyaw,
+        _GO2_AI_MOTION_MAX_YAW_RATE_RADIANS_PER_SECOND,
+        rel_tol=0.0,
+        abs_tol=_GO2_YAW_RATE_FLOAT_ROUNDING_TOLERANCE,
+    ):
+        vyaw = _GO2_AI_MOTION_MAX_YAW_RATE_RADIANS_PER_SECOND
+    if vyaw > _GO2_AI_MOTION_MAX_YAW_RATE_RADIANS_PER_SECOND:
+        raise UnitreeTurnRateMappingError("TURN yaw rate exceeds GO2 AI Motion limit")
+    if plan.direction is TurnDirection.RIGHT:
+        vyaw = -vyaw
+    return UnitreeMotionCommand(vx=0.0, vy=0.0, vyaw=vyaw)
 
 
 def default_unitree_sport_client_factory(network_interface: str | None = None) -> object:
@@ -218,8 +268,10 @@ def _normalize_result(result: object, operation: str) -> bool:
 __all__ = [
     "UnitreeMotionCommand",
     "UnitreeMotionMapper",
+    "UnitreeTurnRateMappingError",
     "UnitreeSdkCommandClient",
     "UnitreeSdkCommandError",
     "UnitreeSdkUnavailableError",
     "default_unitree_sport_client_factory",
+    "map_go2_turn_rate_degrees_to_radians",
 ]

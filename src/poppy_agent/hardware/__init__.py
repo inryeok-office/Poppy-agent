@@ -23,7 +23,9 @@ from poppy_agent.hardware.unitree_sdk import (
     UnitreeSdkCommandClient,
     UnitreeSdkCommandError,
     UnitreeSdkUnavailableError,
+    UnitreeTurnRateMappingError,
     default_unitree_sport_client_factory,
+    map_go2_turn_rate_degrees_to_radians,
 )
 
 __all__ = [
@@ -44,6 +46,8 @@ __all__ = [
     "UnitreeSdkCommandClient",
     "UnitreeSdkCommandError",
     "UnitreeSdkUnavailableError",
+    "UnitreeTurnRateMappingError",
     "default_unitree_sport_client_factory",
+    "map_go2_turn_rate_degrees_to_radians",
     "create_unitree_execution_executor",
 ]

@@ -143,4 +143,19 @@ imports the optional SDK lazily and is constructed only after
 `PhysicalExecutionGate` passes. No command publisher, semantic conversion, or
 hardware safety limit is defined.
 
+## GO2 EDU V1.0.24 TURN rate evidence
+
+The operator-provided Unitree **AI Motion Service Interface** applies to GO2
+EDU software versions below V1.1.6. The recorded GO2 EDU software version is
+V1.0.24, so this document's `vyaw` contract is applicable: radians per second,
+inclusive range `[-0.8, 0.8]`. Poppy's pure
+`map_go2_turn_rate_degrees_to_radians` helper therefore converts the v2
+degrees-per-second rate with `degrees × π / 180` and rejects values outside that
+range instead of clamping them.
+
+This is numeric conversion evidence only. The official material reviewed here
+does not establish the physical direction of positive yaw, command expiry,
+transport-loss behavior, or process-loss behavior. The helper is not attached
+to the real SDK factory, so physical execution remains fail-closed.
+
 Hardware validation status: **NOT TESTED ON HARDWARE**.

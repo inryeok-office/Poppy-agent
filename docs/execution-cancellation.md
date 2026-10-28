@@ -66,6 +66,8 @@ it, but this check is not a replacement for Server transaction authority.
 
 ## Hardware boundary
 
-Cancellation stops software dispatch only. It does not call StopMove,
-SportClient, DDS, or any other Unitree operation, and it does not claim that a
-physical Robot has stopped. Physical execution remains disabled.
+Cancellation stops software dispatch only. In the future gated Unitree backend,
+an active planned motion may make one best-effort transport StopMove request as
+cleanup; this does not make cancellation, StopMove, or Agent shutdown a
+physical-stop guarantee. No cancellation path claims that a physical Robot has
+stopped. Physical execution remains disabled.
