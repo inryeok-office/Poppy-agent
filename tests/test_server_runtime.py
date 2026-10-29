@@ -1,7 +1,8 @@
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import Event
+from types import SimpleNamespace
 from uuid import UUID
 
 import httpx
@@ -142,6 +143,32 @@ def runtime_with_mock_server(handler, *, robot_id: str = ROBOT_ID):
     client = ServerClient(server_config, transport=httpx.MockTransport(handler))
     agent = create_agent(AgentConfig(robot_mode="mock", robot_id=robot_id))
     return AgentServerRuntime(agent, client, server_config)
+
+
+def test_runtime_reads_existing_optional_telemetry_memory_without_sdk_initialization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = runtime_with_recording_server(RecordingServer([]))
+    runtime.agent.start()
+    monkeypatch.setattr(
+        runtime.agent.adapter,
+        "telemetry_snapshot",
+        lambda: SimpleNamespace(
+            received_at=datetime(2026, 10, 19, 8, 0, tzinfo=UTC),
+            battery_percent=63,
+        ),
+        raising=False,
+    )
+
+    telemetry = runtime._local_telemetry_evidence()
+
+    assert telemetry is not None
+    assert telemetry.to_dict() == {
+        "receivedAt": "2026-10-19T08:00:00+00:00",
+        "batteryPercent": 63,
+        "fresh": True,
+    }
+    runtime.agent.shutdown()
 
 
 def test_start_reconciles_active_execution_before_runtime_can_poll() -> None:

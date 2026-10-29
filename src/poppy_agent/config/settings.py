@@ -5,6 +5,20 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from math import isfinite
+
+from poppy_agent.config.open_motion import (
+    CONTROLLED_MOTION_OPEN_MODE,
+    OPEN_MOTION_ENVIRONMENT_KEYS,
+    OpenMotionSettings,
+    load_open_motion_settings,
+)
+from poppy_agent.config.physical_trial import (
+    PHYSICAL_TRIAL_ENVIRONMENT_KEYS,
+    PhysicalTrialSettings,
+    load_physical_trial_settings,
+)
 
 
 class ConfigurationError(ValueError):
@@ -23,6 +37,9 @@ class AgentConfig:
     robot_edition: str | None = None
     robot_firmware_version: str | None = None
     unitree_sdk_version: str | None = None
+    unitree_telemetry_stale_timeout_seconds: float | None = None
+    physical_trial: PhysicalTrialSettings | OpenMotionSettings | None = None
+    physical_trial_issues: tuple[str, ...] = ()
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> AgentConfig:
@@ -49,11 +66,33 @@ class AgentConfig:
             "POPPY_ROBOT_EDITION": values.get("POPPY_ROBOT_EDITION", "").strip(),
             "POPPY_ROBOT_FIRMWARE_VERSION": values.get("POPPY_ROBOT_FIRMWARE_VERSION", "").strip(),
             "UNITREE_SDK_VERSION": values.get("UNITREE_SDK_VERSION", "").strip(),
+            "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS": values.get(
+                "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS", ""
+            ).strip(),
         }
         if robot_mode == "unitree":
             for name, value in unitree_values.items():
                 if not value:
                     raise ConfigurationError(f"{name} is required for ROBOT_MODE=unitree")
+
+        telemetry_stale_timeout_seconds: float | None = None
+        if unitree_values["POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS"]:
+            telemetry_stale_timeout_seconds = _parse_positive_finite_float(
+                unitree_values["POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS"],
+                "POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS",
+            )
+
+        # Trial values never abort startup; issues are reported as BLOCKED reasons.
+        physical_trial: PhysicalTrialSettings | OpenMotionSettings | None = None
+        physical_trial_issues: tuple[str, ...] = ()
+        trial_keys = (*PHYSICAL_TRIAL_ENVIRONMENT_KEYS, *OPEN_MOTION_ENVIRONMENT_KEYS)
+        if physical_execution_enabled or any(values.get(key, "").strip() for key in trial_keys):
+            if values.get("POPPY_PHYSICAL_TRIAL_MODE", "").strip() == CONTROLLED_MOTION_OPEN_MODE:
+                physical_trial, physical_trial_issues = load_open_motion_settings(
+                    values, now=lambda: datetime.now(UTC)
+                )
+            else:
+                physical_trial, physical_trial_issues = load_physical_trial_settings(values)
 
         return cls(
             robot_mode=robot_mode,
@@ -64,6 +103,9 @@ class AgentConfig:
             robot_edition=unitree_values["POPPY_ROBOT_EDITION"] or None,
             robot_firmware_version=unitree_values["POPPY_ROBOT_FIRMWARE_VERSION"] or None,
             unitree_sdk_version=unitree_values["UNITREE_SDK_VERSION"] or None,
+            unitree_telemetry_stale_timeout_seconds=telemetry_stale_timeout_seconds,
+            physical_trial=physical_trial,
+            physical_trial_issues=physical_trial_issues,
         )
 
 
@@ -74,3 +116,13 @@ def _parse_bool(value: str, name: str) -> bool:
     if normalized == "false":
         return False
     raise ConfigurationError(f"{name} must be true or false")
+
+
+def _parse_positive_finite_float(value: str, name: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} must be a positive finite number") from exc
+    if not isfinite(parsed) or parsed <= 0:
+        raise ConfigurationError(f"{name} must be a positive finite number")
+    return parsed

@@ -86,6 +86,7 @@ def create_agent(config: AgentConfig) -> Agent:
             config.robot_edition,
             config.robot_firmware_version,
             config.unitree_sdk_version,
+            config.unitree_telemetry_stale_timeout_seconds,
         )
         if any(value is None for value in required):
             raise ValueError("Unitree Agent configuration is incomplete")
@@ -94,6 +95,7 @@ def create_agent(config: AgentConfig) -> Agent:
         assert config.robot_edition is not None
         assert config.robot_firmware_version is not None
         assert config.unitree_sdk_version is not None
+        assert config.unitree_telemetry_stale_timeout_seconds is not None
         identity = RobotIdentity(
             robot_id=config.robot_id,
             model=config.robot_model,
@@ -104,7 +106,11 @@ def create_agent(config: AgentConfig) -> Agent:
         return Agent(
             config=config,
             adapter=UnitreeGo2Adapter(
-                UnitreeGo2Config(network_interface=config.network_interface, identity=identity)
+                UnitreeGo2Config(
+                    network_interface=config.network_interface,
+                    identity=identity,
+                    telemetry_stale_timeout_seconds=config.unitree_telemetry_stale_timeout_seconds,
+                )
             ),
         )
     if config.robot_mode != "mock":

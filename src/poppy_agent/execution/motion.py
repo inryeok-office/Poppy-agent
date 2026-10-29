@@ -40,13 +40,18 @@ class MotionRateUnit(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class MotionProfile:
-    """Explicitly supplied planning rates; no production defaults exist."""
+    """Explicitly supplied planning rates; no production defaults exist.
 
-    linear_rate_meters_per_second: float
+    ``linear_rate_meters_per_second=None`` means MOVE is not configured and
+    cannot be planned (used by the TURN-only controlled trial).
+    """
+
+    linear_rate_meters_per_second: float | None
     angular_rate_degrees_per_second: float
 
     def __post_init__(self) -> None:
-        _positive_finite(self.linear_rate_meters_per_second, "linear rate")
+        if self.linear_rate_meters_per_second is not None:
+            _positive_finite(self.linear_rate_meters_per_second, "linear rate")
         _positive_finite(self.angular_rate_degrees_per_second, "angular rate")
 
 
@@ -83,6 +88,8 @@ class MotionExecutionStrategy:
         if intent.type is CommandType.MOVE and isinstance(intent.parameters, MoveParameters):
             _positive_finite(intent.parameters.distance_meters, "MOVE distance")
             rate = self._profile.linear_rate_meters_per_second
+            if rate is None:
+                raise MotionStrategyError("MOVE is not configured in this MotionProfile")
             duration = intent.parameters.distance_meters / rate
             _positive_finite(duration, "motion duration")
             return MotionPlan(

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 from uuid import UUID
 
-from poppy_agent.command import CommandType, HighLevelCommand
+from poppy_agent.command import CommandType, HighLevelCommand, HighLevelCommandProgram
 from poppy_agent.command.models import CommandParameters
 from poppy_agent.execution.cancellation import (
     CancellationSleeper,
@@ -44,6 +44,16 @@ class CommandExecutionTarget(Protocol):
 
     def dispatch(self, command: HighLevelCommand) -> bool:
         """Dispatch one already-validated command and report STOP termination."""
+
+
+class ExecutionProgramGuard(Protocol):
+    """Whole-program admission run after safety validation and before dispatch."""
+
+    def admit(self, program: HighLevelCommandProgram) -> None:
+        """Raise to reject the program; a successful admission may debit a budget."""
+
+    def release(self) -> None:
+        """Mark the admitted program as finished."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +108,10 @@ class MockExecutionExecutor:
         safety_policy: CommandSafetyPolicy | None = None,
         bound_robot_id: UUID | None = None,
         sleeper: CancellationSleeper | None = None,
+        program_guard: ExecutionProgramGuard | None = None,
     ) -> None:
         self.target = target or MockCommandTarget()
+        self._program_guard = program_guard
         self._fail_execution = fail_execution
         self._fail_at_sequence = fail_at_sequence
         self._sleeper = sleeper
@@ -147,6 +159,24 @@ class MockExecutionExecutor:
                 failure_reason=str(exc),
             )
 
+        if self._program_guard is None:
+            return self._dispatch_program(task, token)
+        try:
+            self._program_guard.admit(task.command_program)
+        except Exception as exc:
+            return ExecutionResult(
+                execution_id=task.execution_id,
+                status=ExecutionStatus.FAILED,
+                failure_reason=f"program guard rejected execution: {exc}",
+            )
+        try:
+            return self._dispatch_program(task, token)
+        finally:
+            self._program_guard.release()
+
+    def _dispatch_program(
+        self, task: ExecutionTask, token: ExecutionCancellationToken
+    ) -> ExecutionResult:
         for command in task.command_program.commands:
             try:
                 token.raise_if_cancelled()

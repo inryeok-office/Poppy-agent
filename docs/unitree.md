@@ -30,10 +30,18 @@ or infer an interface automatically.
 `UnitreeGo2Adapter` subscribes to `rt/lowstate` only. It does not create publishers,
 instantiate `SportClient` or `MotionSwitcherClient`, or call any command API.
 
-The official `LowState_` exposes voltage/current (`power_v`/`power_a`), not a battery
-percentage. Poppy-Agent therefore reports `battery_percent=None` rather than applying
-an unverified conversion. It also reports operation status as `UNAVAILABLE` until a
-documented read-only source proves a stronger state.
+The official `LowState_` exposes voltage/current (`power_v`/`power_a`) and the BMS
+state-of-charge field (`bms_state.soc`). The adapter retains `soc` only when it is an
+integer from 0 through 100; it does not infer a percentage from voltage/current. It
+also retains a UTC receipt timestamp. The installed IDL has no documented low-state
+field that safely maps to Poppy operational status, so mode remains unknown and the
+adapter reports operational status as `UNAVAILABLE` until a documented read-only
+source proves a stronger state.
+
+`POPPY_UNITREE_TELEMETRY_STALE_TIMEOUT_SECONDS` is required in Unitree mode. The
+approved GO2EDU001 value is `5.0` seconds. A missing or stale low-state snapshot
+reports `OFFLINE`; a fresh snapshot reports `ONLINE`. This freshness policy does not
+enable physical execution or establish Robot readiness.
 
 ## Runtime evidence
 
@@ -120,12 +128,12 @@ Poppy's current contract deliberately records the following decisions:
 | Poppy command | Client contract | Direct mapping | Decision |
 | --- | --- | --- | --- |
 | WAIT | no client operation | execution-level only | handled without hardware call |
-| MOVE | `Move(vx, vy, vyaw)` shape | no | explicit fake-only planning is possible; physical distance-to-velocity mapping remains unresolved |
-| TURN | `Move(vx, vy, vyaw)` yaw component | no | explicit fake-only planning is possible; physical angle-to-yaw-rate mapping remains unresolved |
+| MOVE | `Move(vx, vy, vyaw)` shape | `controlled_motion_open` only | streams `Move(±speed, 0, 0)` for distance/speed and always sends `StopMove` ×3; see [`controlled-motion-open.md`](controlled-motion-open.md). Hardware-run on 2026-10-28 |
+| TURN | `Move(vx, vy, vyaw)` yaw component | controlled trial only | `controlled_turn_v1` streams `Move(0, 0, vyaw)` and always sends `StopMove`; see [`controlled-turn-trial.md`](controlled-turn-trial.md). Yaw sign is configured; `+1` verified on hardware on 2026-10-28 (RIGHT turned clockwise seen from above) |
 | STOP | no client operation | no physical mapping | program STOP terminates dispatch; it is not `StopMove` or E-stop |
-| POSTURE/SIT | `Sit`-shaped client operation | contract only | Fake client records the mapping; hardware enablement remains gated |
-| POSTURE/STAND | `StandUp`-shaped client operation | contract only | Fake client records the mapping; hardware enablement remains gated |
-| PRESET | no defined official mapping | no | explicit policy/allow-list required; default unsupported |
+| POSTURE/SIT | `Sit` | `controlled_motion_open` only | `Sit` → fixed settle wait (no completion signal) |
+| POSTURE/STAND | `RiseSit` after SIT, else `StandUp` + `BalanceStand` | `controlled_motion_open` only | follows SDK example `sport_client_example.py:72`, `:81`; physical stand-up after `RiseSit` not yet observed |
+| PRESET | `Hello`/`Stretch`/`Heart`/`Dance1` | `controlled_motion_open` allow-list only | presetCode `HELLO`/`STRETCH`/`HEART`/`DANCE1` → method, settle wait, `BalanceStand`; jump/flip/pounce never mapped |
 
 The `UnitreeCommandClient` protocol is injected into `UnitreeCommandBackend`.
 It returns a normalized success boolean so the backend never silently ignores a

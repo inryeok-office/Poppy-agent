@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from importlib import import_module
+from math import isfinite
 from threading import RLock
+from time import monotonic
 from typing import Any
 
 from poppy_agent.robot.adapter import RobotIdentity, RobotStatus
@@ -21,65 +24,170 @@ class UnitreeGo2Config:
 
     network_interface: str
     identity: RobotIdentity
+    telemetry_stale_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if not self.network_interface.strip():
             raise ValueError("network_interface must be explicit")
+        if self.telemetry_stale_timeout_seconds is None:
+            raise ValueError("telemetry_stale_timeout_seconds must be explicit")
+        if (
+            not isfinite(self.telemetry_stale_timeout_seconds)
+            or self.telemetry_stale_timeout_seconds <= 0
+        ):
+            raise ValueError("telemetry_stale_timeout_seconds must be positive and finite")
+
+
+@dataclass(frozen=True, slots=True)
+class UnitreeTelemetrySnapshot:
+    """Minimal read-only low-state evidence retained by the adapter.
+
+    ``mode`` remains unset because the installed SDK exposes no documented Go2
+    operational-mode field in ``LowState_`` that can safely map to Poppy's
+    operational-status contract.
+    """
+
+    received_at: datetime
+    battery_percent: int | None
+    mode: str | None = None
 
 
 class UnitreeGo2Adapter:
     """Subscribe to official Go2 `rt/lowstate` without publishing commands."""
 
-    def __init__(self, config: UnitreeGo2Config) -> None:
+    def __init__(
+        self,
+        config: UnitreeGo2Config,
+        *,
+        monotonic_clock: Callable[[], float] = monotonic,
+        utcnow: Callable[[], datetime] | None = None,
+    ) -> None:
         self._config = config
+        self._monotonic_clock = monotonic_clock
+        self._utcnow = utcnow or (lambda: datetime.now(UTC))
         self._subscriber: object | None = None
         self._initialized = False
-        self._state_received = False
+        self._last_received_monotonic: float | None = None
+        self._telemetry_snapshot: UnitreeTelemetrySnapshot | None = None
+        self._command_readiness: Callable[[], bool] | None = None
         self._lock = RLock()
+
+    def set_command_readiness(self, readiness: Callable[[], bool] | None) -> None:
+        """Install the controlled-trial check that may report READY to the Server.
+
+        Without it the adapter always reports UNAVAILABLE.  READY also requires
+        fresh telemetry, so stale state can never advertise availability.
+        """
+        with self._lock:
+            self._command_readiness = readiness
+
+    def telemetry_is_fresh(self) -> bool:
+        """Return whether low-state telemetry arrived within the stale timeout."""
+        with self._lock:
+            return self._initialized and self._telemetry_is_recent_locked()
 
     def initialize(self) -> None:
         """Initialize DDS and subscribe to the official Go2 low-state topic."""
-        if self._initialized:
-            return
-        channel_factory_initialize, channel_subscriber, low_state_type = _load_sdk()
-        channel_factory_initialize(0, self._config.network_interface)
-        subscriber = channel_subscriber("rt/lowstate", low_state_type)
-        subscriber.Init(self._handle_state, 10)
-        self._subscriber = subscriber
-        self._initialized = True
+        with self._lock:
+            if self._initialized:
+                return
+            channel_factory_initialize, channel_subscriber, low_state_type = _load_sdk()
+            channel_factory_initialize(0, self._config.network_interface)
+            subscriber = channel_subscriber("rt/lowstate", low_state_type)
+            self._subscriber = subscriber
+            self._last_received_monotonic = None
+            self._telemetry_snapshot = None
+            self._initialized = True
+            try:
+                subscriber.Init(self._handle_state, 10)
+            except Exception:
+                if self._subscriber is subscriber:
+                    self._subscriber = None
+                    self._initialized = False
+                close = getattr(subscriber, "Close", None)
+                if callable(close):
+                    close()
+                raise
 
     def identity(self) -> RobotIdentity:
         self._require_initialized()
         return self._config.identity
 
     def status(self) -> RobotStatus:
-        self._require_initialized()
         with self._lock:
-            connection_status = "ONLINE" if self._state_received else "OFFLINE"
+            self._require_initialized()
+            snapshot = self._telemetry_snapshot
+            connection_status = "ONLINE" if self._telemetry_is_recent_locked() else "OFFLINE"
+            readiness = self._command_readiness
+        operational_status = "UNAVAILABLE"
+        if connection_status == "ONLINE" and readiness is not None:
+            try:
+                if readiness() is True:
+                    operational_status = "READY"
+            except Exception:
+                operational_status = "UNAVAILABLE"
         return RobotStatus(
             connection_status=connection_status,
-            operational_status="UNAVAILABLE",
-            battery_percent=None,
+            operational_status=operational_status,
+            battery_percent=(
+                snapshot.battery_percent
+                if connection_status == "ONLINE" and snapshot is not None
+                else None
+            ),
             current_execution_id=None,
         )
 
+    def telemetry_snapshot(self) -> UnitreeTelemetrySnapshot | None:
+        """Return the latest read-only snapshot without extending the Server payload."""
+        with self._lock:
+            self._require_initialized()
+            return self._telemetry_snapshot
+
     def capabilities(self) -> tuple[str, ...]:
+        """Always report every trial command capability so registration stays compatible.
+
+        Once the Server knows a capability for this Robot, omitting it would fail
+        registration.  Whether a command may run is controlled by operational status.
+        """
         self._require_initialized()
-        return ("TELEMETRY",)
+        return (
+            "TELEMETRY",
+            "COMMAND_TURN",
+            "COMMAND_MOVE",
+            "COMMAND_STOP",
+            "COMMAND_POSTURE",
+            "COMMAND_PRESET",
+        )
 
     def shutdown(self) -> None:
         """Close only the read-only subscriber; no SDK command is sent."""
-        subscriber = self._subscriber
+        with self._lock:
+            subscriber = self._subscriber
+            self._subscriber = None
+            self._initialized = False
+            self._last_received_monotonic = None
+            self._telemetry_snapshot = None
         if subscriber is not None:
             close = getattr(subscriber, "Close", None)
             if callable(close):
                 close()
-        self._subscriber = None
-        self._initialized = False
 
-    def _handle_state(self, _message: object) -> None:
+    def _handle_state(self, message: object) -> None:
         with self._lock:
-            self._state_received = True
+            if not self._initialized:
+                return
+            self._telemetry_snapshot = UnitreeTelemetrySnapshot(
+                received_at=self._utcnow(),
+                battery_percent=_battery_percent_from_low_state(message),
+            )
+            self._last_received_monotonic = self._monotonic_clock()
+
+    def _telemetry_is_recent_locked(self) -> bool:
+        if self._last_received_monotonic is None:
+            return False
+        assert self._config.telemetry_stale_timeout_seconds is not None
+        elapsed = self._monotonic_clock() - self._last_received_monotonic
+        return 0 <= elapsed <= self._config.telemetry_stale_timeout_seconds
 
     def _require_initialized(self) -> None:
         if not self._initialized:
@@ -96,3 +204,18 @@ def _load_sdk() -> tuple[Callable[[int, str], Any], Any, Any]:
             "Install the official unitree_sdk2_python package and CycloneDDS before "
             "initializing UnitreeGo2Adapter"
         ) from exc
+
+
+def _battery_percent_from_low_state(message: object) -> int | None:
+    """Read the SDK-documented BMS state-of-charge without inferring voltage.
+
+    Invalid or incomplete messages remain telemetry evidence but do not create an
+    unverified battery percentage.
+    """
+    bms_state = getattr(message, "bms_state", None)
+    state_of_charge = getattr(bms_state, "soc", None)
+    if isinstance(state_of_charge, bool) or not isinstance(state_of_charge, int):
+        return None
+    if not 0 <= state_of_charge <= 100:
+        return None
+    return state_of_charge

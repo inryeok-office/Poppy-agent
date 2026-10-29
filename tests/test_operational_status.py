@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 
 from poppy_agent.operational_status import (
+    LocalTelemetryEvidence,
     OperationalReadinessReason,
     OperationalStatusTracker,
     RuntimeConnectivityState,
@@ -104,7 +105,7 @@ def test_server_success_timestamps_only_change_on_success() -> None:
 def test_snapshot_json_is_stable_and_secret_free() -> None:
     payload = ready_tracker().snapshot(observed_at=NOW).to_dict()
 
-    assert payload["schemaVersion"] == 1
+    assert payload["schemaVersion"] == 2
     assert payload["lifecycleState"] == "READY"
     assert payload["connectivityState"] == "CONNECTED"
     serialized = str(payload)
@@ -118,12 +119,33 @@ def test_status_publisher_writes_atomic_json_and_clears(tmp_path) -> None:
     publisher.publish(ready_tracker().snapshot(observed_at=NOW))
 
     payload = loads(path.read_text(encoding="utf-8"))
-    assert payload["schemaVersion"] == 1
+    assert payload["schemaVersion"] == 2
     assert payload["agentId"] == str(AGENT_ID)
     assert not list(path.parent.glob("*.tmp"))
 
     publisher.clear()
     assert not path.exists()
+
+
+def test_local_telemetry_evidence_is_utc_safe_and_secret_free() -> None:
+    payload = LocalTelemetryEvidence(
+        received_at=NOW,
+        battery_percent=72,
+        fresh=True,
+    ).to_dict()
+
+    assert payload == {
+        "receivedAt": "2026-09-17T00:00:00+00:00",
+        "batteryPercent": 72,
+        "fresh": True,
+    }
+    assert "token" not in str(payload).lower()
+
+
+@pytest.mark.parametrize("battery", [True, -1, 101, 1.5])
+def test_local_telemetry_evidence_rejects_invalid_battery(battery: object) -> None:
+    with pytest.raises(ValueError, match="battery_percent"):
+        LocalTelemetryEvidence(received_at=NOW, battery_percent=battery, fresh=True)  # type: ignore[arg-type]
 
 
 def test_status_publisher_failure_is_observable_and_does_not_raise(

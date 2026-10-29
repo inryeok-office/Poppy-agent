@@ -53,6 +53,35 @@ class OperationalReadinessReason(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class LocalTelemetryEvidence:
+    """Secret-free read-only evidence from the already-running Robot adapter.
+
+    This is local status-file observability only. It is deliberately separate
+    from the Server heartbeat contract and does not assert readiness.
+    """
+
+    received_at: datetime
+    battery_percent: int | None
+    fresh: bool
+
+    def __post_init__(self) -> None:
+        if self.received_at.tzinfo is None or self.received_at.utcoffset() is None:
+            raise ValueError("received_at must be timezone-aware")
+        if isinstance(self.battery_percent, bool) or (
+            self.battery_percent is not None
+            and (not isinstance(self.battery_percent, int) or not 0 <= self.battery_percent <= 100)
+        ):
+            raise ValueError("battery_percent must be an integer from 0 through 100 or None")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "receivedAt": self.received_at.astimezone(UTC).isoformat(),
+            "batteryPercent": self.battery_percent,
+            "fresh": self.fresh,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class AgentOperationalSnapshot:
     """Consistent, secret-free point-in-time view of Agent operation."""
 
@@ -71,11 +100,13 @@ class AgentOperationalSnapshot:
     readiness_reasons: tuple[OperationalReadinessReason, ...]
     last_server_success_at: datetime | None
     last_heartbeat_success_at: datetime | None
+    telemetry: LocalTelemetryEvidence | None = None
+    physical_execution: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable camelCase JSON representation."""
 
-        return {
+        result: dict[str, object] = {
             "schemaVersion": self.schema_version,
             "observedAt": self.observed_at.isoformat(),
             "lifecycleState": self.lifecycle_state.value,
@@ -91,7 +122,11 @@ class AgentOperationalSnapshot:
             "readinessReasons": [reason.value for reason in self.readiness_reasons],
             "lastServerSuccessAt": _datetime_value(self.last_server_success_at),
             "lastHeartbeatSuccessAt": _datetime_value(self.last_heartbeat_success_at),
+            "telemetry": self.telemetry.to_dict() if self.telemetry is not None else None,
         }
+        if self.physical_execution is not None:
+            result["physicalExecution"] = self.physical_execution
+        return result
 
 
 class OperationalStatusTracker:
@@ -188,7 +223,7 @@ class OperationalStatusTracker:
             operational_ready and polling_enabled and active_execution_id is None
         )
         return AgentOperationalSnapshot(
-            schema_version=1,
+            schema_version=2,
             observed_at=observed,
             lifecycle_state=lifecycle,
             connectivity_state=connectivity,

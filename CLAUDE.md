@@ -31,10 +31,30 @@ number and a kebab-case short name. Do not commit or push directly to `main` or
 - Never commit or log tokens, IP addresses, credentials, or site-specific settings.
 - Preserve user changes and do not use destructive Git commands.
 - Never execute or test physical movement, turning, posture, actuator, motor, or other
-  robot-control commands.
-- Unitree work is read-only telemetry only and must be based on official SDK material.
+  robot-control commands. The only exception is the controlled physical trial procedure
+  below; even then an AI agent never sends robot commands itself.
+- Unitree work is read-only telemetry only and must be based on official SDK material,
+  except for the TURN-only controlled trial path defined by an approved Issue.
 - If a required contract, dependency, permission, or safety condition is unclear, stop
   and report the blocker instead of adding a speculative workaround.
+
+## Controlled physical trial exception
+
+A physical trial is allowed only when every condition holds:
+
+- Approval: the equipment owner (teacher) approves the trial in advance and is present.
+  The approval is recorded and referenced by `POPPY_PHYSICAL_APPROVAL_REF`.
+- Scope: one approved Issue defines the Robot, the command type, and the numeric limits.
+  Limits record their source (administrator original value vs. proposed value).
+- Single run: the Agent enforces a process-lifetime budget (`POPPY_PHYSICAL_MAX_COMMANDS`);
+  no automatic retry and no second run without a new approval.
+- Observers: at least two observers, a cleared area, and a remote controller in hand.
+- Damping procedure: on any abnormal motion, switch to Damping with the remote, wait
+  three minutes, power off if safe, then remove the battery.
+- Records: observed direction and angle, stop behavior, execution status and ID, and a
+  secret-free Agent log summary are committed under `docs/` after the trial.
+- AI agents only implement and test with fakes. Physical enablement, systemd control,
+  EnvironmentFile edits, and the run itself are performed by a human operator.
 
 ## Verification
 

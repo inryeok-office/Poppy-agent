@@ -3,19 +3,35 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
+from poppy_agent.config.open_motion import PRESET_SDK_METHODS, OpenMotionSettings
+from poppy_agent.config.physical_trial import PhysicalTrialSettings
+from poppy_agent.execution.cancellation import ExecutionCancellationToken
 from poppy_agent.execution.executor import MockExecutionExecutor
-from poppy_agent.execution.motion import MotionExecutionStrategy, MotionSleeper
+from poppy_agent.execution.motion import MotionExecutionStrategy, MotionProfile, MotionSleeper
+from poppy_agent.execution.open_motion import OpenMotionGuard, open_motion_readiness_evidence
 from poppy_agent.execution.readiness import (
+    PhysicalCommandClientKind,
     PhysicalExecutionGate,
     PhysicalReadinessEvidence,
 )
 from poppy_agent.execution.safety import CommandSafetyPolicy
+from poppy_agent.execution.trial import TrialGuard, controlled_trial_readiness_evidence
 
 from .boundary import HardwareCommandTarget
-from .unitree import UnitreeCommandBackend, UnitreeCommandClient
-from .unitree_sdk import UnitreeSdkCommandClient
+from .unitree import OpenMotionActions, UnitreeCommandBackend, UnitreeCommandClient
+from .unitree_sdk import (
+    Go2MotionMapper,
+    Go2TurnRateMapper,
+    MotionStreamTiming,
+    UnitreeSdkCommandClient,
+)
+
+# Official example timeout (example/go2/high_level/go2_sport_client.py:84).
+OPEN_MOTION_RPC_TIMEOUT_SECONDS = 10.0
 
 
 def create_unitree_execution_executor(
@@ -63,4 +79,175 @@ def create_unitree_execution_executor(
     )
 
 
-__all__ = ["create_unitree_execution_executor"]
+@dataclass(frozen=True, slots=True)
+class ControlledTrialExecution:
+    """Executor and the process-lifetime trial guard that limits it."""
+
+    executor: MockExecutionExecutor
+    guard: TrialGuard
+
+
+def create_controlled_trial_executor(
+    *,
+    robot_id: UUID,
+    physical_execution_enabled: bool,
+    trial_settings: PhysicalTrialSettings | None,
+    telemetry_fresh: Callable[[], bool],
+    network_interface: str | None = None,
+    sport_client_factory: Callable[[], object] | None = None,
+    timing: MotionStreamTiming | None = None,
+) -> ControlledTrialExecution:
+    """Create the TURN-only trial executor after the readiness gate passes.
+
+    Evidence is derived only from validated ``trial_settings``; callers cannot
+    inject it.  The gate runs before any SDK object is constructed.
+    ``sport_client_factory`` and ``timing`` are test seams for an inert
+    SportClient double and a fake clock; production passes neither.
+    """
+    evidence = (
+        controlled_trial_readiness_evidence(
+            trial_settings, command_client_kind=PhysicalCommandClientKind.REAL
+        )
+        if trial_settings is not None
+        else None
+    )
+    PhysicalExecutionGate().require_ready(
+        physical_execution_enabled=physical_execution_enabled,
+        evidence=evidence,
+    )
+    assert trial_settings is not None
+    guard = TrialGuard(trial_settings, telemetry_fresh=telemetry_fresh)
+    client = UnitreeSdkCommandClient(
+        sdk_client_factory=sport_client_factory,
+        network_interface=network_interface,
+        motion_mapper=Go2TurnRateMapper(trial_settings.turn_left_yaw_sign),
+        timing=timing,
+    )
+    backend = UnitreeCommandBackend(
+        client,
+        motion_strategy=MotionExecutionStrategy(
+            MotionProfile(
+                linear_rate_meters_per_second=None,
+                angular_rate_degrees_per_second=trial_settings.turn_rate_degrees_per_second,
+            )
+        ),
+        trial_guard=guard,
+    )
+    target = HardwareCommandTarget(backend)
+    try:
+        target.initialize()
+    except Exception:
+        try:
+            target.shutdown()
+        except Exception:
+            pass
+        raise
+    executor = MockExecutionExecutor(
+        target,
+        safety_policy=CommandSafetyPolicy(),
+        bound_robot_id=robot_id,
+        program_guard=guard,
+    )
+    return ControlledTrialExecution(executor=executor, guard=guard)
+
+
+@dataclass(frozen=True, slots=True)
+class OpenMotionExecution:
+    """Executor and the per-Execution guard of the open motion trial."""
+
+    executor: MockExecutionExecutor
+    guard: OpenMotionGuard
+
+
+def create_open_motion_executor(
+    *,
+    robot_id: UUID,
+    physical_execution_enabled: bool,
+    settings: OpenMotionSettings | None,
+    telemetry_fresh: Callable[[], bool],
+    network_interface: str | None = None,
+    sport_client_factory: Callable[[], object] | None = None,
+    timing: MotionStreamTiming | None = None,
+    now: Callable[[], datetime] | None = None,
+) -> OpenMotionExecution:
+    """Create the ``controlled_motion_open`` executor after the readiness gate passes.
+
+    Evidence is derived only from validated ``settings``; the gate runs before
+    any SDK object is constructed.  ``sport_client_factory``, ``timing`` and
+    ``now`` are test seams; production passes none of them.
+    """
+    evidence = (
+        open_motion_readiness_evidence(settings, command_client_kind=PhysicalCommandClientKind.REAL)
+        if settings is not None
+        else None
+    )
+    PhysicalExecutionGate().require_ready(
+        physical_execution_enabled=physical_execution_enabled,
+        evidence=evidence,
+    )
+    assert settings is not None
+    clock = now or (lambda: datetime.now(UTC))
+    guard = OpenMotionGuard(settings, telemetry_fresh=telemetry_fresh, now=clock)
+    stream_timing = timing or MotionStreamTiming()
+    client = UnitreeSdkCommandClient(
+        sdk_client_factory=sport_client_factory,
+        network_interface=network_interface,
+        motion_mapper=Go2MotionMapper(settings.turn_left_yaw_sign),
+        timing=stream_timing,
+        rpc_timeout_seconds=OPEN_MOTION_RPC_TIMEOUT_SECONDS,
+    )
+
+    def wait(seconds: float, token: ExecutionCancellationToken | None) -> None:
+        if stream_timing.wait is not None:
+            cancelled = stream_timing.wait(seconds, token)
+        elif token is not None:
+            cancelled = token.wait(seconds)
+        else:
+            stream_timing.sleep(seconds)
+            cancelled = False
+        if cancelled and token is not None:
+            token.raise_if_cancelled()
+
+    backend = UnitreeCommandBackend(
+        client,
+        motion_strategy=MotionExecutionStrategy(
+            MotionProfile(
+                linear_rate_meters_per_second=settings.linear_speed_meters_per_second,
+                angular_rate_degrees_per_second=settings.turn_rate_degrees_per_second,
+            )
+        ),
+        open_actions=OpenMotionActions(
+            waiter=wait,
+            posture_settle_seconds=settings.posture_settle_seconds,
+            preset_settle_seconds=settings.preset_settle_seconds,
+            preset_methods={
+                code: PRESET_SDK_METHODS[code] for code in sorted(settings.allowed_presets)
+            },
+            guard=guard,
+        ),
+    )
+    target = HardwareCommandTarget(backend)
+    try:
+        target.initialize()
+    except Exception:
+        try:
+            target.shutdown()
+        except Exception:
+            pass
+        raise
+    executor = MockExecutionExecutor(
+        target,
+        safety_policy=CommandSafetyPolicy(preset_allowlist=settings.allowed_presets or None),
+        bound_robot_id=robot_id,
+        program_guard=guard,
+    )
+    return OpenMotionExecution(executor=executor, guard=guard)
+
+
+__all__ = [
+    "OpenMotionExecution",
+    "create_open_motion_executor",
+    "ControlledTrialExecution",
+    "create_controlled_trial_executor",
+    "create_unitree_execution_executor",
+]

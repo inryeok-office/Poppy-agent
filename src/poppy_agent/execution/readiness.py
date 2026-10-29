@@ -52,6 +52,9 @@ class PhysicalReadinessEvidence:
     observability_requirements_met: bool = False
     equipment_owner_approved: bool = False
     hardware_validation_completed: bool = False
+    # A controlled first trial is itself the hardware validation.  Only an
+    # explicit single-process budget may stand in for completed validation.
+    controlled_trial_budget_defined: bool = False
 
     def __post_init__(self) -> None:
         for field in fields(self):
@@ -121,7 +124,7 @@ class PhysicalReadinessEvaluator:
             blockers.append(PhysicalReadinessBlocker.OBSERVABILITY_REQUIREMENTS_UNMET)
         if not evidence.equipment_owner_approved:
             blockers.append(PhysicalReadinessBlocker.EQUIPMENT_OWNER_APPROVAL_MISSING)
-        if not evidence.hardware_validation_completed:
+        if not (evidence.hardware_validation_completed or evidence.controlled_trial_budget_defined):
             blockers.append(PhysicalReadinessBlocker.HARDWARE_VALIDATION_NOT_COMPLETED)
         return PhysicalExecutionReadiness(ready=not blockers, blocking_reasons=tuple(blockers))
 
