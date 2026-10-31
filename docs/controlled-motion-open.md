@@ -5,14 +5,20 @@
 (boot gate·전환 스크립트도 같은 상한).
 `controlled_turn_v1`은 그대로 두고 별도 모드로 추가한다. 관리자 원문(누적 회전 360°, 선속도
 3 m/s, 60 s)과 이번 교사 승인(실행 1회 기준 총 이동 4.0 m, 총 동작 시간 120 s)은 출처가
-다르며, 아래 하드 상한은 교사 승인 값이다.
+다르며, 아래 하드 상한은 교사 승인 값이다. 2026-10-31 행사 운영 지시로 총 이동 4.0 m 합계를
+공간 위치 검사로 바꿨다. 공간 크기 상한과 여유 하한은 이 지시 값이고 설정으로 더 엄격하게만 바꿀 수 있다.
 
 | 설정 키 | 시험 값 | 코드 하드 상한 |
 |---|---|---|
 | `POPPY_PHYSICAL_TRIAL_MODE` | `controlled_motion_open` | 정확히 일치 |
 | `POPPY_PHYSICAL_LINEAR_SPEED_M_PER_S` | `0.5` | 1.0 |
-| `POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND` | `3.0` | 총 이동 상한 이하 |
-| `POPPY_PHYSICAL_MAX_TOTAL_MOVE_M` | `4.0` | 4.0 (실행 1회) |
+| `POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND` | `3.0` | 3.0 |
+| `POPPY_PHYSICAL_ARENA_WIDTH_M` | `4.0` | 4.0 |
+| `POPPY_PHYSICAL_ARENA_DEPTH_M` | `4.0` | 4.0 |
+| `POPPY_PHYSICAL_ARENA_MARGIN_M` | `0.4` | 0.4 이상 |
+| `POPPY_PHYSICAL_START_X_M` | `2.0` | 허용 영역 안 |
+| `POPPY_PHYSICAL_START_Y_M` | `0.4` | 허용 영역 안 |
+| `POPPY_PHYSICAL_START_HEADING` | `+Y` | `+X`/`-X`/`+Y`/`-Y` |
 | `POPPY_PHYSICAL_TURN_RATE_DEG_PER_S` | `45` (0.785 rad/s) | 0.8 rad/s |
 | `POPPY_PHYSICAL_MAX_TURN_DEG_PER_COMMAND` | `360` | 360 |
 | `POPPY_PHYSICAL_MAX_TOTAL_SECONDS` | `120` | 120 (실행 1회) |
@@ -32,7 +38,12 @@
 
 ## 실행 1회 검사(dispatch 전 전체 프로그램)
 
-- MOVE 명령당 ≤ 3.0 m, 총 이동 ≤ 4.0 m. TURN 명령당 ≤ 360°.
+- MOVE 명령당 ≤ 3.0 m. TURN 명령당 ≤ 360°.
+- 위치: 실행마다 설정된 출발 자세에서 시작해 계획 경로를 계산한다. 왼쪽 회전은 반시계, 오른쪽 회전은
+  시계 방향이고, 각 이동 구간 전체가 벽에서 여유만큼 안쪽 영역에 있어야 한다. Client 시뮬레이션과 같은 규칙이다.
+- 위치는 추측 항법 계산값이다. 측위 장치가 없으므로 실행마다 로봇을 출발 자세로 되돌려야 하고, 미끄러짐으로
+  생긴 오차는 보정되지 않는다.
+- 이전 `POPPY_PHYSICAL_MAX_TOTAL_MOVE_M`은 Agent가 읽지 않는다.
 - 총 계획 시간(이동 거리/속도 + 회전 각도/각속도 + 자세 settle + preset settle + WAIT) ≤ 120 s.
 - SIT 이후 STAND 전까지 MOVE·TURN·PRESET 거부. SIT 상태는 실행 사이에도 유지된다(SIT 명령을
   보낸 순간부터 앉은 것으로 간주, STAND 성공 후 해제).

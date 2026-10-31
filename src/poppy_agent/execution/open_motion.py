@@ -1,14 +1,17 @@
 """Per-Execution guard for the time-boxed ``controlled_motion_open`` trial.
 
 Every Execution is checked as a whole before any dispatch: per-command limits,
-total MOVE distance, total planned motion time, the posture order (no MOVE,
-TURN or PRESET after SIT until STAND), the PRESET allow-list and the approval
-expiry.  There is no process budget; a failed or unknown outcome fails only that
-Execution and is recorded, never retried.
+the planned position inside the arena, total planned motion time, the posture
+order (no MOVE, TURN or PRESET after SIT until STAND), the PRESET allow-list and
+the approval expiry.  Position is dead reckoned from the configured start pose
+for each Execution; there is no localization, so the Robot must be back at that
+pose before every Execution.  There is no process budget; a failed or unknown
+outcome fails only that Execution and is recorded, never retried.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,10 +21,12 @@ from threading import Lock
 from poppy_agent.command import (
     CommandType,
     HighLevelCommandProgram,
+    MoveDirection,
     MoveParameters,
     Posture,
     PostureParameters,
     PresetParameters,
+    TurnDirection,
     TurnParameters,
     WaitParameters,
 )
@@ -86,6 +91,9 @@ class OpenMotionGuard:
         physical = 0
         move_meters = 0.0
         seconds = 0.0
+        x = settings.start_x_meters
+        y = settings.start_y_meters
+        heading = settings.start_heading_degrees
         for command in program.commands:
             parameters = command.parameters
             if command.type is CommandType.STOP:
@@ -106,6 +114,13 @@ class OpenMotionGuard:
                 if parameters.distance_meters > settings.max_move_meters_per_command:
                     raise OpenMotionGuardError("MOVE distance exceeds the per-command limit")
                 move_meters += parameters.distance_meters
+                sign = 1.0 if parameters.direction is MoveDirection.FORWARD else -1.0
+                x += sign * parameters.distance_meters * math.sin(math.radians(heading))
+                y += sign * parameters.distance_meters * math.cos(math.radians(heading))
+                # The allowed area is convex and each segment starts inside it, so an
+                # end point inside means the whole segment is inside.
+                if not self._inside_arena(x, y):
+                    raise OpenMotionGuardError("MOVE leaves the arena")
                 seconds += parameters.distance_meters / settings.linear_speed_meters_per_second
             elif command.type is CommandType.TURN:
                 if not isinstance(parameters, TurnParameters):
@@ -114,6 +129,11 @@ class OpenMotionGuard:
                     raise OpenMotionGuardError("TURN is not allowed after SIT until STAND")
                 if parameters.angle_degrees > settings.max_turn_degrees_per_command:
                     raise OpenMotionGuardError("TURN angle exceeds the per-command limit")
+                heading += (
+                    parameters.angle_degrees
+                    if parameters.direction is TurnDirection.RIGHT
+                    else -parameters.angle_degrees
+                )
                 seconds += parameters.angle_degrees / settings.turn_rate_degrees_per_second
             elif command.type is CommandType.POSTURE:
                 if not isinstance(parameters, PostureParameters):
@@ -130,11 +150,17 @@ class OpenMotionGuard:
                 seconds += settings.preset_settle_seconds
             else:
                 raise OpenMotionGuardError(f"{command.type.value} is not supported")
-        if move_meters > settings.max_total_move_meters + 1e-9:
-            raise OpenMotionGuardError("total MOVE distance exceeds the per-Execution limit")
         if seconds > settings.max_total_seconds + 1e-9:
             raise OpenMotionGuardError("total motion time exceeds the per-Execution limit")
         return OpenMotionPlanSummary(physical, move_meters, seconds)
+
+    def _inside_arena(self, x: float, y: float) -> bool:
+        settings = self._settings
+        margin = settings.arena_margin_meters
+        return (
+            margin - 1e-9 <= x <= settings.arena_width_meters - margin + 1e-9
+            and margin - 1e-9 <= y <= settings.arena_depth_meters - margin + 1e-9
+        )
 
     def admit(self, program: HighLevelCommandProgram) -> None:
         """Validate the whole Execution before dispatch; reject on any limit."""

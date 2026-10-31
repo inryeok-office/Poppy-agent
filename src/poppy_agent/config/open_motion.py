@@ -19,9 +19,11 @@ CONTROLLED_MOTION_OPEN_MODE = "controlled_motion_open"
 
 # Per-Execution physical safety limits (teacher approval 2026-10-28, open trial).
 MAX_LINEAR_SPEED_METERS_PER_SECOND = 1.0
+MAX_MOVE_METERS_PER_COMMAND = 3.0
 MAX_TURN_DEGREES_PER_COMMAND = 360.0
-MAX_TOTAL_MOVE_METERS_PER_EXECUTION = 4.0
 MAX_TOTAL_SECONDS_PER_EXECUTION = 120.0
+MAX_ARENA_SIDE_METERS = 4.0
+MIN_ARENA_MARGIN_METERS = 0.4
 MAX_SETTLE_SECONDS = 15.0
 # The approval window is at most eight hours (teacher approval extended on 2026-10-29);
 # a longer expiry is a configuration error.
@@ -37,13 +39,21 @@ PRESET_SDK_METHODS: Mapping[str, str] = {
     "DANCE1": "Dance1",
 }
 
+# Start heading -> degrees clockwise from +Y, the arena's forward axis.
+START_HEADING_DEGREES: Mapping[str, float] = {"+Y": 0.0, "+X": 90.0, "-Y": 180.0, "-X": 270.0}
+
 OPEN_MOTION_COMMANDS = frozenset({"MOVE", "TURN", "POSTURE", "PRESET"})
 
 OPEN_MOTION_ENVIRONMENT_KEYS = (
     "POPPY_PHYSICAL_TRIAL_MODE",
     "POPPY_PHYSICAL_LINEAR_SPEED_M_PER_S",
     "POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND",
-    "POPPY_PHYSICAL_MAX_TOTAL_MOVE_M",
+    "POPPY_PHYSICAL_ARENA_WIDTH_M",
+    "POPPY_PHYSICAL_ARENA_DEPTH_M",
+    "POPPY_PHYSICAL_ARENA_MARGIN_M",
+    "POPPY_PHYSICAL_START_X_M",
+    "POPPY_PHYSICAL_START_Y_M",
+    "POPPY_PHYSICAL_START_HEADING",
     "POPPY_PHYSICAL_TURN_RATE_DEG_PER_S",
     "POPPY_PHYSICAL_MAX_TURN_DEG_PER_COMMAND",
     "POPPY_PHYSICAL_MAX_TOTAL_SECONDS",
@@ -66,7 +76,12 @@ class OpenMotionSettings:
     mode: str
     linear_speed_meters_per_second: float
     max_move_meters_per_command: float
-    max_total_move_meters: float
+    arena_width_meters: float
+    arena_depth_meters: float
+    arena_margin_meters: float
+    start_x_meters: float
+    start_y_meters: float
+    start_heading_degrees: float
     turn_rate_degrees_per_second: float
     max_turn_degrees_per_command: float
     max_total_seconds: float
@@ -95,15 +110,35 @@ def load_open_motion_settings(
     speed = _bounded(
         raw, "POPPY_PHYSICAL_LINEAR_SPEED_M_PER_S", MAX_LINEAR_SPEED_METERS_PER_SECOND, issues
     )
-    total_move = _bounded(
-        raw, "POPPY_PHYSICAL_MAX_TOTAL_MOVE_M", MAX_TOTAL_MOVE_METERS_PER_EXECUTION, issues
-    )
     move_per_command = _bounded(
-        raw,
-        "POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND",
-        total_move if total_move is not None else MAX_TOTAL_MOVE_METERS_PER_EXECUTION,
-        issues,
+        raw, "POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND", MAX_MOVE_METERS_PER_COMMAND, issues
     )
+    arena_width = _bounded(raw, "POPPY_PHYSICAL_ARENA_WIDTH_M", MAX_ARENA_SIDE_METERS, issues)
+    arena_depth = _bounded(raw, "POPPY_PHYSICAL_ARENA_DEPTH_M", MAX_ARENA_SIDE_METERS, issues)
+    arena_margin = _bounded(raw, "POPPY_PHYSICAL_ARENA_MARGIN_M", MAX_ARENA_SIDE_METERS, issues)
+    if arena_margin is not None and arena_margin < MIN_ARENA_MARGIN_METERS - 1e-9:
+        issues.append(
+            "POPPY_PHYSICAL_ARENA_MARGIN_M is below the approved minimum of "
+            f"{MIN_ARENA_MARGIN_METERS:g}"
+        )
+    start_x = _bounded(raw, "POPPY_PHYSICAL_START_X_M", MAX_ARENA_SIDE_METERS, issues)
+    start_y = _bounded(raw, "POPPY_PHYSICAL_START_Y_M", MAX_ARENA_SIDE_METERS, issues)
+    if (
+        arena_width is not None
+        and arena_depth is not None
+        and arena_margin is not None
+        and start_x is not None
+        and start_y is not None
+    ):
+        if not (
+            arena_margin - 1e-9 <= start_x <= arena_width - arena_margin + 1e-9
+            and arena_margin - 1e-9 <= start_y <= arena_depth - arena_margin + 1e-9
+        ):
+            issues.append("POPPY_PHYSICAL_START_X_M/Y_M must be inside the arena margin")
+    heading_value = raw["POPPY_PHYSICAL_START_HEADING"]
+    start_heading = START_HEADING_DEGREES.get(heading_value)
+    if heading_value and start_heading is None:
+        issues.append("POPPY_PHYSICAL_START_HEADING must be one of +X, -X, +Y, -Y")
     rate = _bounded(
         raw,
         "POPPY_PHYSICAL_TURN_RATE_DEG_PER_S",
@@ -145,7 +180,9 @@ def load_open_motion_settings(
 
     if issues:
         return None, tuple(issues)
-    assert speed is not None and move_per_command is not None and total_move is not None
+    assert speed is not None and move_per_command is not None
+    assert arena_width is not None and arena_depth is not None and arena_margin is not None
+    assert start_x is not None and start_y is not None and start_heading is not None
     assert rate is not None and turn_per_command is not None and total_seconds is not None
     assert posture_settle is not None and preset_settle is not None and sign is not None
     assert allowed_commands is not None and allowed_presets is not None
@@ -155,7 +192,12 @@ def load_open_motion_settings(
             mode=mode,
             linear_speed_meters_per_second=speed,
             max_move_meters_per_command=move_per_command,
-            max_total_move_meters=total_move,
+            arena_width_meters=arena_width,
+            arena_depth_meters=arena_depth,
+            arena_margin_meters=arena_margin,
+            start_x_meters=start_x,
+            start_y_meters=start_y,
+            start_heading_degrees=start_heading,
             turn_rate_degrees_per_second=rate,
             max_turn_degrees_per_command=turn_per_command,
             max_total_seconds=total_seconds,
@@ -227,13 +269,16 @@ def _expiry(value: str, now: datetime, issues: list[str]) -> datetime | None:
 
 __all__ = [
     "CONTROLLED_MOTION_OPEN_MODE",
+    "MAX_ARENA_SIDE_METERS",
     "MAX_LINEAR_SPEED_METERS_PER_SECOND",
-    "MAX_TOTAL_MOVE_METERS_PER_EXECUTION",
+    "MAX_MOVE_METERS_PER_COMMAND",
     "MAX_TOTAL_SECONDS_PER_EXECUTION",
     "MAX_TURN_DEGREES_PER_COMMAND",
+    "MIN_ARENA_MARGIN_METERS",
     "OPEN_MOTION_COMMANDS",
     "OPEN_MOTION_ENVIRONMENT_KEYS",
     "OpenMotionSettings",
     "PRESET_SDK_METHODS",
+    "START_HEADING_DEGREES",
     "load_open_motion_settings",
 ]
