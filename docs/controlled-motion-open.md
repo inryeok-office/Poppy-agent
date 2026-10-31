@@ -6,17 +6,17 @@
 `controlled_turn_v1`은 그대로 두고 별도 모드로 추가한다. 관리자 원문(누적 회전 360°, 선속도
 3 m/s, 60 s)과 이번 교사 승인(실행 1회 기준 총 이동 4.0 m, 총 동작 시간 120 s)은 출처가
 다르며, 아래 하드 상한은 교사 승인 값이다. 2026-10-31 행사 운영 지시로 총 이동 4.0 m 합계를
-공간 위치 검사로 바꿨다. 공간 크기 상한과 여유 하한은 이 지시 값이고 설정으로 더 엄격하게만 바꿀 수 있다.
+공간 위치 검사로 바꿨고, 같은 날 교사 승인으로 공간을 6 m × 6 m, 출발을 오른쪽 아래로 넓혔다. 공간 크기 상한과 여유 하한은 이 지시 값이고 설정으로 더 엄격하게만 바꿀 수 있다.
 
 | 설정 키 | 시험 값 | 코드 하드 상한 |
 |---|---|---|
 | `POPPY_PHYSICAL_TRIAL_MODE` | `controlled_motion_open` | 정확히 일치 |
 | `POPPY_PHYSICAL_LINEAR_SPEED_M_PER_S` | `0.5` | 1.0 |
 | `POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND` | `3.0` | 3.0 |
-| `POPPY_PHYSICAL_ARENA_WIDTH_M` | `4.0` | 4.0 |
-| `POPPY_PHYSICAL_ARENA_DEPTH_M` | `4.0` | 4.0 |
+| `POPPY_PHYSICAL_ARENA_WIDTH_M` | `6.0` | 6.0 |
+| `POPPY_PHYSICAL_ARENA_DEPTH_M` | `6.0` | 6.0 |
 | `POPPY_PHYSICAL_ARENA_MARGIN_M` | `0.4` | 0.4 이상 |
-| `POPPY_PHYSICAL_START_X_M` | `2.0` | 허용 영역 안 |
+| `POPPY_PHYSICAL_START_X_M` | `5.6` | 허용 영역 안 |
 | `POPPY_PHYSICAL_START_Y_M` | `0.4` | 허용 영역 안 |
 | `POPPY_PHYSICAL_START_HEADING` | `+Y` | `+X`/`-X`/`+Y`/`-Y` |
 | `POPPY_PHYSICAL_TURN_RATE_DEG_PER_S` | `45` (0.785 rad/s) | 0.8 rad/s |

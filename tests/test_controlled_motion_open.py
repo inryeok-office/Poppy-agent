@@ -262,8 +262,8 @@ def test_every_open_key_is_required_without_defaults(key: str) -> None:
     [
         ("POPPY_PHYSICAL_LINEAR_SPEED_M_PER_S", "1.01", "approved limit of 1"),
         ("POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND", "3.1", "approved limit of 3"),
-        ("POPPY_PHYSICAL_ARENA_WIDTH_M", "4.1", "approved limit of 4"),
-        ("POPPY_PHYSICAL_ARENA_DEPTH_M", "4.1", "approved limit of 4"),
+        ("POPPY_PHYSICAL_ARENA_WIDTH_M", "6.1", "approved limit of 6"),
+        ("POPPY_PHYSICAL_ARENA_DEPTH_M", "6.1", "approved limit of 6"),
         ("POPPY_PHYSICAL_ARENA_MARGIN_M", "0.3", "approved minimum of 0.4"),
         ("POPPY_PHYSICAL_START_X_M", "3.7", "inside the arena margin"),
         ("POPPY_PHYSICAL_START_Y_M", "0.3", "inside the arena margin"),
@@ -487,6 +487,22 @@ def test_left_turn_is_counterclockwise_and_right_turn_is_clockwise() -> None:
     guard.plan(program(turn(90, RIGHT), move(3.0)), sitting=False)
     with pytest.raises(OpenMotionGuardError, match="leaves the arena"):
         guard.plan(program(turn(90, LEFT), move(0.1)), sitting=False)
+
+
+def test_six_meter_arena_from_bottom_right_corner() -> None:
+    settings = open_settings(
+        POPPY_PHYSICAL_ARENA_WIDTH_M="6.0",
+        POPPY_PHYSICAL_ARENA_DEPTH_M="6.0",
+        POPPY_PHYSICAL_START_X_M="5.6",
+    )
+    guard = OpenMotionGuard(settings, telemetry_fresh=lambda: True, now=lambda: START)
+    up = (move(0.6),) * 4
+
+    guard.plan(program(*up, turn(90, LEFT), *(move(0.6),) * 5), sitting=False)
+    with pytest.raises(OpenMotionGuardError, match="leaves the arena"):
+        guard.plan(program(turn(90, RIGHT), move(0.5)), sitting=False)
+    with pytest.raises(OpenMotionGuardError, match="leaves the arena"):
+        guard.plan(program(move(0.5, BACKWARD)), sitting=False)
 
 
 def test_total_distance_over_four_meters_is_allowed_inside_the_arena() -> None:
