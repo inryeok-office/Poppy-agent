@@ -20,6 +20,7 @@ from poppy_agent.execution.readiness import (
 )
 from poppy_agent.execution.safety import CommandSafetyPolicy
 from poppy_agent.execution.trial import TrialGuard, controlled_trial_readiness_evidence
+from poppy_agent.robot.adapter import SportStateSample
 
 from .boundary import HardwareCommandTarget
 from .unitree import OpenMotionActions, UnitreeCommandBackend, UnitreeCommandClient
@@ -165,6 +166,7 @@ def create_open_motion_executor(
     physical_execution_enabled: bool,
     settings: OpenMotionSettings | None,
     telemetry_fresh: Callable[[], bool],
+    sport_state: Callable[[], SportStateSample | None],
     network_interface: str | None = None,
     sport_client_factory: Callable[[], object] | None = None,
     timing: MotionStreamTiming | None = None,
@@ -195,6 +197,7 @@ def create_open_motion_executor(
         motion_mapper=Go2MotionMapper(settings.turn_left_yaw_sign),
         timing=stream_timing,
         rpc_timeout_seconds=OPEN_MOTION_RPC_TIMEOUT_SECONDS,
+        sport_state=sport_state,
     )
 
     def wait(seconds: float, token: ExecutionCancellationToken | None) -> None:

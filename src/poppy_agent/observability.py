@@ -58,6 +58,9 @@ EXECUTION_PHYSICAL_ACTION_FINISHED = "execution_physical_action_finished"
 
 _ALLOWED_CONTEXT = frozenset(
     {
+        "achieved_magnitude",
+        "start_mode",
+        "start_gait_type",
         "agent_id",
         "robot_id",
         "execution_id",

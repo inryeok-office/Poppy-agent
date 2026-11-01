@@ -22,7 +22,9 @@ from poppy_agent.execution.cancellation import (
     ExecutionCancelledError,
 )
 from poppy_agent.execution.motion import MotionPlan, MotionRateUnit, MotionUnit
+from poppy_agent.robot.adapter import SportStateSample
 
+from .closed_loop import ClosedLoopLimits, MotionTracker
 from .unitree import UnitreeCommandClient
 
 
@@ -36,6 +38,22 @@ class UnitreeSdkUnavailableError(UnitreeSdkCommandError):
 
 class UnitreeMotionOutcomeUnknownError(UnitreeSdkCommandError):
     """Raised when the Robot may still be moving or the motion result is unknown."""
+
+
+class UnitreeTelemetryStaleError(UnitreeSdkCommandError):
+    """Raised when sport state is missing or stale before or during a motion."""
+
+
+class UnitreeMotionNotObservedError(UnitreeSdkCommandError):
+    """Raised when the Robot did not start moving after ``Move`` was accepted."""
+
+
+class UnitreeMotionTimeoutError(UnitreeSdkCommandError):
+    """Raised when the target was not reached within the time limit."""
+
+
+class UnitreeMotionOffCourseError(UnitreeSdkCommandError):
+    """Raised when MOVE travelled past the commanded distance away from its line."""
 
 
 class UnitreeTurnRateMappingError(ValueError):
@@ -203,6 +221,8 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
         motion_mapper: UnitreeMotionMapper | None = None,
         timing: MotionStreamTiming | None = None,
         rpc_timeout_seconds: float | None = None,
+        sport_state: Callable[[], SportStateSample | None] | None = None,
+        closed_loop_limits: ClosedLoopLimits | None = None,
     ) -> None:
         if sdk_client is not None and sdk_client_factory is not None:
             raise ValueError("provide sdk_client or sdk_client_factory, not both")
@@ -213,6 +233,8 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
         )
         self._motion_mapper = motion_mapper
         self._timing = timing or MotionStreamTiming()
+        self._sport_state = sport_state
+        self._closed_loop_limits = closed_loop_limits or ClosedLoopLimits()
         self.last_motion_trace: MotionStreamTrace | None = None
         self._initialized = False
 
@@ -309,6 +331,8 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
             ) from exc
         if not isinstance(command, UnitreeMotionCommand):
             raise UnitreeSdkCommandError("motion mapper returned an invalid command")
+        if self._sport_state is not None:
+            return self._execute_closed_loop(plan, command, self._sport_state, cancellation_token)
 
         timing = self._timing
         trace = MotionStreamTrace(command=command, duration_seconds=plan.duration_seconds)
@@ -334,14 +358,7 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
                 next_send = start + trace.move_calls * timing.move_period_seconds
                 wait = min(next_send, start + plan.duration_seconds) - timing.monotonic()
                 if wait > 0:
-                    if timing.wait is not None:
-                        cancelled = timing.wait(wait, cancellation_token)
-                    elif cancellation_token is not None:
-                        cancelled = cancellation_token.wait(wait)
-                    else:
-                        timing.sleep(wait)
-                        cancelled = False
-                    if cancelled and cancellation_token is not None:
+                    if self._wait(wait, cancellation_token) and cancellation_token is not None:
                         cancellation_token.raise_if_cancelled()
         except BaseException as exc:
             primary_error = exc
@@ -355,6 +372,92 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
             ):
                 raise UnitreeMotionOutcomeUnknownError("no StopMove call succeeded after motion")
         return True
+
+    def _execute_closed_loop(
+        self,
+        plan: MotionPlan,
+        command: UnitreeMotionCommand,
+        sport_state: Callable[[], SportStateSample | None],
+        cancellation_token: ExecutionCancellationToken | None,
+    ) -> bool:
+        """Stream ``Move`` until sport state shows the target, then always ``StopMove``.
+
+        Stale telemetry before the start sends nothing.  Stale telemetry, no
+        observed motion, a timeout or leaving the line stop the Robot and fail
+        the command; nothing is retried.
+        """
+        start_sample = sport_state()
+        if start_sample is None:
+            raise UnitreeTelemetryStaleError("로봇 상태 정보가 오래되어 시작하지 않았어요")
+        timing = self._timing
+        limits = self._closed_loop_limits
+        command_sign = command.vyaw if plan.command_type is CommandType.TURN else command.vx
+        tracker = MotionTracker(plan, start_sample, command_sign, limits)
+        trace = MotionStreamTrace(
+            command=command,
+            duration_seconds=plan.duration_seconds,
+            achieved_magnitude=0.0,
+            start_mode=start_sample.mode,
+            start_gait_type=start_sample.gait_type,
+        )
+        self.last_motion_trace = trace
+        primary_error: BaseException | None = None
+        start = timing.monotonic()
+        try:
+            while True:
+                sample = sport_state()
+                if sample is None:
+                    raise UnitreeTelemetryStaleError("움직이는 중 로봇 상태 정보가 끊겼어요")
+                trace.achieved_magnitude = tracker.update(sample)
+                if tracker.reached:
+                    break
+                elapsed = timing.monotonic() - start
+                if tracker.off_course:
+                    raise UnitreeMotionOffCourseError("로봇이 경로를 벗어났어요")
+                if elapsed >= limits.stall_window_seconds and tracker.stalled:
+                    raise UnitreeMotionNotObservedError("로봇이 움직이지 않았어요")
+                if elapsed >= tracker.timeout_seconds:
+                    raise UnitreeMotionTimeoutError("시간 안에 목표에 도달하지 못했어요")
+                if cancellation_token is not None:
+                    cancellation_token.raise_if_cancelled()
+                scale = tracker.speed_scale
+                call_started = timing.monotonic()
+                try:
+                    self._call_operation(
+                        "Move", command.vx * scale, command.vy * scale, command.vyaw * scale
+                    )
+                except UnitreeSdkCommandError as exc:
+                    raise UnitreeMotionOutcomeUnknownError(
+                        "Unitree SDK Move failed during streaming"
+                    ) from exc
+                trace.move_calls += 1
+                if timing.monotonic() - call_started >= timing.max_move_call_seconds:
+                    raise UnitreeMotionOutcomeUnknownError("Unitree SDK Move call blocked too long")
+                wait = start + trace.move_calls * timing.move_period_seconds - timing.monotonic()
+                if wait > 0:
+                    if self._wait(wait, cancellation_token) and cancellation_token is not None:
+                        cancellation_token.raise_if_cancelled()
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            trace.elapsed_seconds = timing.monotonic() - start
+            self._stop_move_best_effort(trace)
+            if trace.stop_move_successes == 0 and (
+                primary_error is None or isinstance(primary_error, ExecutionCancelledError)
+            ):
+                raise UnitreeMotionOutcomeUnknownError("no StopMove call succeeded after motion")
+        return True
+
+    def _wait(self, seconds: float, cancellation_token: ExecutionCancellationToken | None) -> bool:
+        """Wait, returning whether cancellation was observed."""
+        timing = self._timing
+        if timing.wait is not None:
+            return timing.wait(seconds, cancellation_token)
+        if cancellation_token is not None:
+            return cancellation_token.wait(seconds)
+        timing.sleep(seconds)
+        return False
 
     def stop_move(self) -> bool:
         """Call official ``StopMove``; this is not a hardware emergency stop."""
@@ -424,6 +527,9 @@ class MotionStreamTrace:
     stop_move_calls: int = 0
     stop_move_successes: int = 0
     elapsed_seconds: float = 0.0
+    achieved_magnitude: float | None = None
+    start_mode: int | None = None
+    start_gait_type: int | None = None
 
 
 def _normalize_result(result: object, operation: str) -> bool:
@@ -441,7 +547,11 @@ __all__ = [
     "MotionStreamTiming",
     "MotionStreamTrace",
     "UnitreeMotionCommand",
+    "UnitreeMotionNotObservedError",
+    "UnitreeMotionOffCourseError",
     "UnitreeMotionOutcomeUnknownError",
+    "UnitreeMotionTimeoutError",
+    "UnitreeTelemetryStaleError",
     "UnitreeTurnRateMappingError",
     "UnitreeMotionMapper",
     "UnitreeSdkCommandClient",

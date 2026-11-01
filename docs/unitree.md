@@ -27,7 +27,7 @@ or infer an interface automatically.
 
 ## Read-only boundary
 
-`UnitreeGo2Adapter` subscribes to `rt/lowstate` only. It does not create publishers,
+`UnitreeGo2Adapter` subscribes to `rt/lowstate` and `rt/sportmodestate` only. It does not create publishers,
 instantiate `SportClient` or `MotionSwitcherClient`, or call any command API.
 
 The official `LowState_` exposes voltage/current (`power_v`/`power_a`) and the BMS
