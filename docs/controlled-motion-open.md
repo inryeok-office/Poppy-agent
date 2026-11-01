@@ -36,6 +36,33 @@
 - 실행 횟수 제한(process budget)이 없다. 결과 불명/SDK 예외는 그 실행만 FAILED이며 `lastFailure`로
   기록하고 LOCKED로 바꾸지 않는다. 자동 retry는 없다.
 
+## MOVE·TURN 폐루프 (Issue #96)
+
+`rt/sportmodestate`의 위치와 IMU yaw로 도달을 확인한다. 공간 검사는 지금처럼 명령 거리로
+계획 단계에서 한다. 실제 위치는 공간 검사에 쓰지 않는다. 설정 키는 추가하지 않았고 값은
+`ClosedLoopLimits` 코드 기본값이다. 아래 값은 제안값이며 실기 기록으로 확정해야 한다.
+
+| 항목 | 값 |
+|---|---|
+| sport state 신선도 | 200 ms 초과면 오래된 값 |
+| TURN 허용 오차, 감속 구간, 최소 각속도 | ±3°, 남은 30°, 20°/s |
+| MOVE 허용 오차, 감속 구간, 최소 속도 | 3 cm, 남은 0.5 m, 0.2 m/s |
+| 미이동 판정 | 시작 후 1.5 s에 목표 방향 진행이 5 cm(TURN 3°) 미만 |
+| 시간 초과 | max(계획 시간 × 2, 3 s) |
+| MOVE 경로 이탈 | 직선 거리가 명령 거리 + 0.15 m 초과 |
+
+- TURN은 yaw 변화를 누적해 ±180° wrap과 360° 회전을 처리한다. MOVE는 시작 yaw 방향으로 투영한
+  거리를 쓴다. 반대 방향 움직임은 진행으로 세지 않는다.
+- 시간 초과 하한 3 s는 계획 시간이 1.5 s보다 짧은 명령에만 적용된다. 2배만 쓰면 미이동 판정
+  전에 끝나고, 걸음 시작 지연만으로 실패한다.
+- sport state가 시작 전에 오래됐으면 `Move` 없이 FAILED다. 움직이는 중에 오래되거나 미이동,
+  시간 초과, 경로 이탈이면 `StopMove` 후 FAILED다. 프로그램의 남은 명령은 실행하지 않고
+  자동 재시도도 없다.
+- 물리 READY와 실행 승인도 sport state 신선도를 요구한다.
+- `execution_physical_turn_finished` 로그에 `achieved_magnitude`, `start_mode`,
+  `start_gait_type`을 남긴다. `achieved_magnitude`는 `StopMove` 직전 값이라 관성 이동은 포함하지 않는다.
+- `controlled_turn_v1`은 시간 기반 그대로다.
+
 ## 실행 1회 검사(dispatch 전 전체 프로그램)
 
 - MOVE 명령당 ≤ 3.0 m. TURN 명령당 ≤ 360°.

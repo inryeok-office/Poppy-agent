@@ -11,7 +11,10 @@ from threading import RLock
 from time import monotonic
 from typing import Any
 
-from poppy_agent.robot.adapter import RobotIdentity, RobotStatus
+from poppy_agent.robot.adapter import RobotIdentity, RobotStatus, SportStateSample
+
+# Closed-loop motion must never steer on an older pose than this.
+SPORT_STATE_STALE_TIMEOUT_SECONDS = 0.2
 
 
 class UnitreeSdkUnavailableError(ImportError):
@@ -53,7 +56,7 @@ class UnitreeTelemetrySnapshot:
 
 
 class UnitreeGo2Adapter:
-    """Subscribe to official Go2 `rt/lowstate` without publishing commands."""
+    """Subscribe to official Go2 state topics without publishing commands."""
 
     def __init__(
         self,
@@ -66,7 +69,10 @@ class UnitreeGo2Adapter:
         self._monotonic_clock = monotonic_clock
         self._utcnow = utcnow or (lambda: datetime.now(UTC))
         self._subscriber: object | None = None
+        self._sport_subscriber: object | None = None
         self._initialized = False
+        self._sport_state: SportStateSample | None = None
+        self._sport_received_monotonic: float | None = None
         self._last_received_monotonic: float | None = None
         self._telemetry_snapshot: UnitreeTelemetrySnapshot | None = None
         self._command_readiness: Callable[[], bool] | None = None
@@ -91,23 +97,43 @@ class UnitreeGo2Adapter:
         with self._lock:
             if self._initialized:
                 return
-            channel_factory_initialize, channel_subscriber, low_state_type = _load_sdk()
+            channel_factory_initialize, channel_subscriber, low_state_type, sport_state_type = (
+                _load_sdk()
+            )
             channel_factory_initialize(0, self._config.network_interface)
             subscriber = channel_subscriber("rt/lowstate", low_state_type)
+            sport_subscriber = channel_subscriber("rt/sportmodestate", sport_state_type)
             self._subscriber = subscriber
+            self._sport_subscriber = sport_subscriber
             self._last_received_monotonic = None
             self._telemetry_snapshot = None
+            self._sport_state = None
+            self._sport_received_monotonic = None
             self._initialized = True
             try:
                 subscriber.Init(self._handle_state, 10)
+                sport_subscriber.Init(self._handle_sport_state, 10)
             except Exception:
                 if self._subscriber is subscriber:
                     self._subscriber = None
+                    self._sport_subscriber = None
                     self._initialized = False
-                close = getattr(subscriber, "Close", None)
-                if callable(close):
-                    close()
+                for opened in (subscriber, sport_subscriber):
+                    close = getattr(opened, "Close", None)
+                    if callable(close):
+                        close()
                 raise
+
+    def sport_state(self) -> SportStateSample | None:
+        """Return the latest sport state, or ``None`` when it is missing or stale."""
+        with self._lock:
+            received = self._sport_received_monotonic
+            if not self._initialized or received is None:
+                return None
+            elapsed = self._monotonic_clock() - received
+            if not 0 <= elapsed <= SPORT_STATE_STALE_TIMEOUT_SECONDS:
+                return None
+            return self._sport_state
 
     def identity(self) -> RobotIdentity:
         self._require_initialized()
@@ -160,14 +186,17 @@ class UnitreeGo2Adapter:
         )
 
     def shutdown(self) -> None:
-        """Close only the read-only subscriber; no SDK command is sent."""
+        """Close only the read-only subscribers; no SDK command is sent."""
         with self._lock:
-            subscriber = self._subscriber
+            subscribers = (self._subscriber, self._sport_subscriber)
             self._subscriber = None
+            self._sport_subscriber = None
             self._initialized = False
             self._last_received_monotonic = None
             self._telemetry_snapshot = None
-        if subscriber is not None:
+            self._sport_state = None
+            self._sport_received_monotonic = None
+        for subscriber in subscribers:
             close = getattr(subscriber, "Close", None)
             if callable(close):
                 close()
@@ -182,6 +211,16 @@ class UnitreeGo2Adapter:
             )
             self._last_received_monotonic = self._monotonic_clock()
 
+    def _handle_sport_state(self, message: object) -> None:
+        sample = _sport_state_from_message(message)
+        if sample is None:
+            return
+        with self._lock:
+            if not self._initialized:
+                return
+            self._sport_state = sample
+            self._sport_received_monotonic = self._monotonic_clock()
+
     def _telemetry_is_recent_locked(self) -> bool:
         if self._last_received_monotonic is None:
             return False
@@ -194,16 +233,34 @@ class UnitreeGo2Adapter:
             raise RuntimeError("UnitreeGo2Adapter is not initialized")
 
 
-def _load_sdk() -> tuple[Callable[[int, str], Any], Any, Any]:
+def _load_sdk() -> tuple[Callable[[int, str], Any], Any, Any, Any]:
     try:
         channel = import_module("unitree_sdk2py.core.channel")
         dds = import_module("unitree_sdk2py.idl.unitree_go.msg.dds_")
-        return channel.ChannelFactoryInitialize, channel.ChannelSubscriber, dds.LowState_
+        return (
+            channel.ChannelFactoryInitialize,
+            channel.ChannelSubscriber,
+            dds.LowState_,
+            dds.SportModeState_,
+        )
     except (ImportError, AttributeError) as exc:
         raise UnitreeSdkUnavailableError(
             "Install the official unitree_sdk2_python package and CycloneDDS before "
             "initializing UnitreeGo2Adapter"
         ) from exc
+
+
+def _sport_state_from_message(message: Any) -> SportStateSample | None:
+    """Read ``SportModeState_``; a malformed message leaves the last sample to go stale."""
+    try:
+        x, y = float(message.position[0]), float(message.position[1])
+        yaw = float(message.imu_state.rpy[2])
+        mode, gait_type = int(message.mode), int(message.gait_type)
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
+    if not (isfinite(x) and isfinite(y) and isfinite(yaw)):
+        return None
+    return SportStateSample(x, y, yaw, mode, gait_type)
 
 
 def _battery_percent_from_low_state(message: object) -> int | None:
