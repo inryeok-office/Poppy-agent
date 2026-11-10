@@ -26,14 +26,17 @@ from poppy_agent.command import (
     WaitParameters,
 )
 from poppy_agent.config.open_motion import OpenMotionSettings
+from poppy_agent.execution.failure import CodedError, FailureCode
 from poppy_agent.execution.readiness import (
     PhysicalCommandClientKind,
     PhysicalReadinessEvidence,
 )
 
 
-class OpenMotionGuardError(RuntimeError):
+class OpenMotionGuardError(CodedError):
     """Raised when an Execution is outside the open trial limits."""
+
+    failure_code = FailureCode.SAFETY_REJECTED
 
 
 class OpenMotionGuardState(StrEnum):
@@ -140,12 +143,17 @@ class OpenMotionGuard:
         """Validate the whole Execution before dispatch; reject on any limit."""
         with self._lock:
             if self.expired():
-                raise OpenMotionGuardError("the open trial approval window has expired")
+                raise OpenMotionGuardError(
+                    "the open trial approval window has expired",
+                    failure_code=FailureCode.APPROVAL_EXPIRED,
+                )
             if self._executing:
                 raise OpenMotionGuardError("an Execution is already in progress")
             summary = self.plan(program, sitting=self._sitting)
             if summary.physical_commands and self._telemetry_fresh() is not True:
-                raise OpenMotionGuardError("Robot telemetry is not fresh")
+                raise OpenMotionGuardError(
+                    "Robot telemetry is not fresh", failure_code=FailureCode.TELEMETRY_STALE
+                )
             self._executing = True
             self._executions_admitted += 1
             self._last_plan = summary

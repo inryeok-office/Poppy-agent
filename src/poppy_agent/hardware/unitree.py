@@ -24,6 +24,7 @@ from poppy_agent.execution.cancellation import (
     ExecutionCancellationToken,
     ExecutionCancelledError,
 )
+from poppy_agent.execution.failure import CodedError, FailureCode
 from poppy_agent.execution.motion import MotionExecutionStrategy, MotionPlan, MotionSleeper
 from poppy_agent.hardware.boundary import HardwareCommandIntent, HardwareCommandPort
 from poppy_agent.observability import (
@@ -82,7 +83,7 @@ class StreamingMotion(Protocol):
         """Execute the full planned motion, honoring cancellation."""
 
 
-class UnitreeCommandBackendError(RuntimeError):
+class UnitreeCommandBackendError(CodedError):
     """Raised when a Unitree mapping is unsupported or cannot be dispatched."""
 
 
@@ -286,7 +287,8 @@ class UnitreeCommandBackend(HardwareCommandPort):
             result = self._client.execute_motion(plan)
             if result is not True:
                 raise UnitreeCommandBackendError(
-                    f"Unitree client reported failure for {intent.type.value}"
+                    f"Unitree client reported failure for {intent.type.value}",
+                    failure_code=FailureCode.SDK_REJECTED,
                 )
             self._sleeper.sleep(plan.duration_seconds, cancellation_token)
             return False
@@ -301,7 +303,8 @@ class UnitreeCommandBackend(HardwareCommandPort):
             result = self._client.stand_up()
         if result is not True:
             raise UnitreeCommandBackendError(
-                f"Unitree client reported failure for {intent.parameters.posture.value}"
+                f"Unitree client reported failure for {intent.parameters.posture.value}",
+                failure_code=FailureCode.SDK_REJECTED,
             )
         return False
 
@@ -388,7 +391,10 @@ class UnitreeCommandBackend(HardwareCommandPort):
     @staticmethod
     def _require_client_ok(result: object, operation: str) -> None:
         if result is not True:
-            raise UnitreeCommandBackendError(f"Unitree client reported failure for {operation}")
+            raise UnitreeCommandBackendError(
+                f"Unitree client reported failure for {operation}",
+                failure_code=FailureCode.SDK_REJECTED,
+            )
 
     def _log_action_started(self, action: str, operations: tuple[str, ...]) -> None:
         log_event(
@@ -437,7 +443,8 @@ class UnitreeCommandBackend(HardwareCommandPort):
             result = streaming(plan, cancellation_token)
             if result is not True:
                 raise UnitreeCommandBackendError(
-                    f"Unitree client reported failure for {plan.command_type.value}"
+                    f"Unitree client reported failure for {plan.command_type.value}",
+                    failure_code=FailureCode.SDK_REJECTED,
                 )
         except ExecutionCancelledError:
             self._log_motion_finished(plan, "CANCELLED")
