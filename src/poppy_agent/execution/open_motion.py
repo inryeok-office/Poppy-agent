@@ -181,7 +181,9 @@ class OpenMotionGuard:
                 self._resync_posture_locked()
             summary = self.plan(program, sitting=self._posture is TrackedPosture.SITTING)
             if summary.physical_commands and self._posture is TrackedPosture.UNKNOWN:
-                raise OpenMotionGuardError(POSTURE_UNKNOWN_MESSAGE)
+                raise OpenMotionGuardError(
+                    POSTURE_UNKNOWN_MESSAGE, failure_code=FailureCode.POSTURE_UNKNOWN
+                )
             if summary.physical_commands and self._telemetry_fresh() is not True:
                 raise OpenMotionGuardError(
                     "Robot telemetry is not fresh", failure_code=FailureCode.TELEMETRY_STALE

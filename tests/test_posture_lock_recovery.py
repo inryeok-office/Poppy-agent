@@ -9,7 +9,7 @@ import pytest
 
 import poppy_agent.main as main_module
 from poppy_agent.command import Posture
-from poppy_agent.execution import ExecutionStatus
+from poppy_agent.execution import ExecutionStatus, FailureCode
 from poppy_agent.execution.open_motion import (
     OpenMotionGuard,
     OpenMotionGuardError,
@@ -99,6 +99,7 @@ def test_rejected_sit_no_longer_leaves_a_false_sitting_lock() -> None:
         blocked = run(trial, *program)
         assert blocked.status is ExecutionStatus.FAILED
         assert "posture is unknown" in (blocked.failure_reason or "")
+        assert blocked.failure_code is FailureCode.POSTURE_UNKNOWN
     # Nothing reached the SDK while the posture was unknown: no blind RiseSit.
     assert sport.names() == []
     assert trial.guard.available() is False
