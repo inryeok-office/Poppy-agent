@@ -5,6 +5,11 @@ total MOVE distance, total planned motion time, the posture order (no MOVE,
 TURN or PRESET after SIT until STAND), the PRESET allow-list and the approval
 expiry.  There is no process budget; a failed or unknown outcome fails only that
 Execution and is recorded, never retried.
+
+Posture is tracked across Executions.  A failed or cancelled POSTURE or PRESET
+leaves the physical posture unknown: every physical program is then rejected
+until the posture is re-read from the Robot (``posture_probe``) or the Agent is
+restarted after an operator has confirmed the Robot is standing.
 """
 
 from __future__ import annotations
@@ -40,6 +45,21 @@ class OpenMotionGuardState(StrEnum):
     AVAILABLE = "AVAILABLE"
     EXECUTING = "EXECUTING"
     EXPIRED = "EXPIRED"
+    POSTURE_UNKNOWN = "POSTURE_UNKNOWN"
+
+
+class TrackedPosture(StrEnum):
+    """The guard's belief about the physical posture between commands."""
+
+    STANDING = "STANDING"
+    SITTING = "SITTING"
+    UNKNOWN = "UNKNOWN"
+
+
+POSTURE_UNKNOWN_MESSAGE = (
+    "Robot posture is unknown after a failed posture or preset command; "
+    "re-read the posture from the Robot, or confirm it is standing and restart the Agent"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,15 +80,23 @@ class OpenMotionGuard:
         *,
         telemetry_fresh: Callable[[], bool],
         now: Callable[[], datetime],
+        posture_probe: Callable[[], Posture | None] | None = None,
     ) -> None:
         self._settings = settings
         self._telemetry_fresh = telemetry_fresh
         self._now = now
+        self._posture_probe = posture_probe
         self._lock = Lock()
         self._executing = False
-        # The Robot is checked standing before the trial; SIT is tracked across
-        # Executions because the physical posture persists between them.
-        self._sitting = False
+        # Without a probe the Robot is checked standing before the trial; with a
+        # probe the actual posture is read before the first Execution.  The
+        # posture is tracked across Executions because it persists between them.
+        self._posture = TrackedPosture.STANDING
+        self._posture_unknown_reason: str | None = None
+        if posture_probe is not None:
+            self._posture = TrackedPosture.UNKNOWN
+            self._posture_unknown_reason = "posture not yet read from the Robot"
+            self._resync_posture_locked()
         self._executions_admitted = 0
         self._last_failure: str | None = None
         self._last_plan: OpenMotionPlanSummary | None = None
@@ -143,7 +171,11 @@ class OpenMotionGuard:
                 raise OpenMotionGuardError("the open trial approval window has expired")
             if self._executing:
                 raise OpenMotionGuardError("an Execution is already in progress")
-            summary = self.plan(program, sitting=self._sitting)
+            if self._posture is TrackedPosture.UNKNOWN:
+                self._resync_posture_locked()
+            summary = self.plan(program, sitting=self._posture is TrackedPosture.SITTING)
+            if summary.physical_commands and self._posture is TrackedPosture.UNKNOWN:
+                raise OpenMotionGuardError(POSTURE_UNKNOWN_MESSAGE)
             if summary.physical_commands and self._telemetry_fresh() is not True:
                 raise OpenMotionGuardError("Robot telemetry is not fresh")
             self._executing = True
@@ -160,17 +192,59 @@ class OpenMotionGuard:
             self._last_failure = reason
 
     def note_sit_requested(self) -> None:
-        """Assume SIT from the moment it is sent, even if its result is unknown."""
+        """Assume SIT from the moment it is sent; a failure later makes it unknown."""
         with self._lock:
-            self._sitting = True
+            self._posture = TrackedPosture.SITTING
 
     def sitting(self) -> bool:
         with self._lock:
-            return self._sitting
+            return self._posture is TrackedPosture.SITTING
+
+    def posture(self) -> TrackedPosture:
+        with self._lock:
+            return self._posture
 
     def note_stand_completed(self) -> None:
         with self._lock:
-            self._sitting = False
+            self._posture = TrackedPosture.STANDING
+            self._posture_unknown_reason = None
+
+    def mark_posture_unknown(self, reason: str) -> TrackedPosture:
+        """Record a failed posture-changing command and re-read the actual posture.
+
+        The SDK may reject or time out on a command the Robot partly performed,
+        so the internal belief is dropped instead of guessed.  Returns the
+        posture after the immediate re-read (``UNKNOWN`` without a probe).
+        """
+        with self._lock:
+            self._last_failure = reason
+            self._posture = TrackedPosture.UNKNOWN
+            self._posture_unknown_reason = reason
+            return self._resync_posture_locked()
+
+    def resync_posture(self) -> TrackedPosture:
+        """Operator path: replace the tracked posture with the posture read now.
+
+        Only an answer from the Robot can clear ``UNKNOWN``; without a probe, or
+        when the probe has no fresh answer, the tracked posture is unchanged.
+        """
+        with self._lock:
+            return self._resync_posture_locked()
+
+    def _resync_posture_locked(self) -> TrackedPosture:
+        if self._posture_probe is None:
+            return self._posture
+        try:
+            observed = self._posture_probe()
+        except Exception:
+            observed = None
+        if observed is Posture.SIT:
+            self._posture = TrackedPosture.SITTING
+            self._posture_unknown_reason = None
+        elif observed is Posture.STAND:
+            self._posture = TrackedPosture.STANDING
+            self._posture_unknown_reason = None
+        return self._posture
 
     def available(self) -> bool:
         return self.state() is OpenMotionGuardState.AVAILABLE
@@ -179,11 +253,13 @@ class OpenMotionGuard:
         if self.expired():
             return OpenMotionGuardState.EXPIRED
         with self._lock:
-            return (
-                OpenMotionGuardState.EXECUTING
-                if self._executing
-                else OpenMotionGuardState.AVAILABLE
-            )
+            if self._executing:
+                return OpenMotionGuardState.EXECUTING
+            if self._posture is TrackedPosture.UNKNOWN:
+                self._resync_posture_locked()
+            if self._posture is TrackedPosture.UNKNOWN:
+                return OpenMotionGuardState.POSTURE_UNKNOWN
+            return OpenMotionGuardState.AVAILABLE
 
     def snapshot(self) -> dict[str, object]:
         state = self.state()
@@ -191,7 +267,10 @@ class OpenMotionGuard:
             plan = self._last_plan
             return {
                 "state": state.value,
-                "sitting": self._sitting,
+                "sitting": self._posture is TrackedPosture.SITTING,
+                "posture": self._posture.value,
+                "postureUnknownReason": self._posture_unknown_reason,
+                "postureProbe": self._posture_probe is not None,
                 "executionsAdmitted": self._executions_admitted,
                 "lastFailure": self._last_failure,
                 "lastPlan": None
@@ -232,5 +311,7 @@ __all__ = [
     "OpenMotionGuardError",
     "OpenMotionGuardState",
     "OpenMotionPlanSummary",
+    "POSTURE_UNKNOWN_MESSAGE",
+    "TrackedPosture",
     "open_motion_readiness_evidence",
 ]
