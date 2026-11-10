@@ -21,12 +21,13 @@ from poppy_agent.execution.cancellation import (
     ExecutionCancellationToken,
     ExecutionCancelledError,
 )
+from poppy_agent.execution.failure import CodedError, FailureCode
 from poppy_agent.execution.motion import MotionPlan, MotionRateUnit, MotionUnit
 
 from .unitree import UnitreeCommandClient
 
 
-class UnitreeSdkCommandError(RuntimeError):
+class UnitreeSdkCommandError(CodedError):
     """Raised when the optional SDK cannot be initialized or called safely."""
 
 
@@ -330,7 +331,9 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
                     ) from exc
                 trace.move_calls += 1
                 if timing.monotonic() - call_started >= timing.max_move_call_seconds:
-                    raise UnitreeMotionOutcomeUnknownError("Unitree SDK Move call blocked too long")
+                    raise UnitreeMotionOutcomeUnknownError(
+                        "Unitree SDK Move call blocked too long", failure_code=FailureCode.TIMEOUT
+                    )
                 next_send = start + trace.move_calls * timing.move_period_seconds
                 wait = min(next_send, start + plan.duration_seconds) - timing.monotonic()
                 if wait > 0:
@@ -406,7 +409,10 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
             ) from exc
         normalized = _normalize_result(result, method_name)
         if normalized is not True:
-            raise UnitreeSdkCommandError(f"Unitree SDK {method_name} reported failure")
+            raise UnitreeSdkCommandError(
+                f"Unitree SDK {method_name} reported failure",
+                failure_code=FailureCode.SDK_REJECTED,
+            )
         return True
 
     def _require_initialized(self) -> None:

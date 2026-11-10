@@ -632,6 +632,7 @@ class AgentServerRuntime:
             robot_id=task.robot_id,
             execution_id=task.execution_id,
             execution_status=result.status.value,
+            failure_code=result.failure_code.value if result.failure_code is not None else None,
         )
         return result
 
