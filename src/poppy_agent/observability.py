@@ -64,6 +64,7 @@ _ALLOWED_CONTEXT = frozenset(
         "execution_status",
         "recovery_action",
         "error_type",
+        "failure_code",
         "attempt",
         "max_attempts",
         "protocol_version",

@@ -13,6 +13,7 @@ from poppy_agent.execution.cancellation import (
     ExecutionCancellationToken,
     ExecutionCancelledError,
 )
+from poppy_agent.execution.failure import FailureCode, failure_code_of
 from poppy_agent.execution.models import ExecutionResult, ExecutionStatus, ExecutionTask
 from poppy_agent.execution.safety import (
     CommandSafetyPolicy,
@@ -148,6 +149,7 @@ class MockExecutionExecutor:
                 execution_id=task.execution_id,
                 status=ExecutionStatus.FAILED,
                 failure_reason="configured mock execution failure",
+                failure_code=FailureCode.EXECUTION_ERROR,
             )
 
         try:
@@ -157,6 +159,7 @@ class MockExecutionExecutor:
                 execution_id=task.execution_id,
                 status=ExecutionStatus.FAILED,
                 failure_reason=str(exc),
+                failure_code=FailureCode.SAFETY_REJECTED,
             )
 
         if self._program_guard is None:
@@ -168,6 +171,7 @@ class MockExecutionExecutor:
                 execution_id=task.execution_id,
                 status=ExecutionStatus.FAILED,
                 failure_reason=f"program guard rejected execution: {exc}",
+                failure_code=failure_code_of(exc, FailureCode.SAFETY_REJECTED),
             )
         try:
             return self._dispatch_program(task, token)
@@ -189,6 +193,7 @@ class MockExecutionExecutor:
                     failure_reason=(
                         f"configured mock execution failure at sequence {command.sequence}"
                     ),
+                    failure_code=FailureCode.EXECUTION_ERROR,
                 )
             try:
                 dispatch_with_cancellation = getattr(
@@ -209,6 +214,7 @@ class MockExecutionExecutor:
                     execution_id=task.execution_id,
                     status=ExecutionStatus.FAILED,
                     failure_reason=f"execution target failed: {exc}",
+                    failure_code=failure_code_of(exc, FailureCode.EXECUTION_ERROR),
                 )
             if should_stop:
                 break
