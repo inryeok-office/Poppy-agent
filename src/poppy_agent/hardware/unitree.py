@@ -342,10 +342,17 @@ class UnitreeCommandBackend(HardwareCommandPort):
                 self._require_client_ok(self._balance_stand(), "BalanceStand")
                 actions.guard.note_stand_completed()
         except ExecutionCancelledError:
+            if posture is Posture.STAND:
+                # The stand may have started; the tracked SIT/STAND no longer holds.
+                actions.guard.mark_posture_unknown(f"{posture.value} cancelled")
             self._log_action_finished(posture.value, "CANCELLED")
             raise
         except Exception as exc:
-            actions.guard.lock(f"{posture.value} outcome unknown: {safe_exception_type(exc)}")
+            # A rejected Sit/RiseSit leaves the belief wrong either way (the 10/31
+            # and 11/1 lock): drop it and re-read the actual posture.
+            actions.guard.mark_posture_unknown(
+                f"{posture.value} outcome unknown: {safe_exception_type(exc)}"
+            )
             self._log_action_finished(posture.value, "FAILED", exc)
             raise
         self._log_action_finished(posture.value, "COMPLETED")
@@ -371,7 +378,9 @@ class UnitreeCommandBackend(HardwareCommandPort):
             self._log_action_finished(code, "CANCELLED")
             raise
         except Exception as exc:
-            actions.guard.lock(f"PRESET {code} outcome unknown: {safe_exception_type(exc)}")
+            actions.guard.mark_posture_unknown(
+                f"PRESET {code} outcome unknown: {safe_exception_type(exc)}"
+            )
             self._log_action_finished(code, "FAILED", exc)
             raise
         self._log_action_finished(code, "COMPLETED")

@@ -35,9 +35,28 @@
 - MOVE 명령당 ≤ 3.0 m, 총 이동 ≤ 4.0 m. TURN 명령당 ≤ 360°.
 - 총 계획 시간(이동 거리/속도 + 회전 각도/각속도 + 자세 settle + preset settle + WAIT) ≤ 120 s.
 - SIT 이후 STAND 전까지 MOVE·TURN·PRESET 거부. SIT 상태는 실행 사이에도 유지된다(SIT 명령을
-  보낸 순간부터 앉은 것으로 간주, STAND 성공 후 해제).
+  보낸 순간부터 앉은 것으로 간주, STAND 성공 후 해제, 실패 시 아래 `UNKNOWN`).
 - PRESET은 allow-list 코드만 허용(`CommandSafetyPolicy`와 guard 두 곳에서 검사).
 - STOP 이후 명령은 실행하지 않는다.
+
+## 자세 불명(`POSTURE_UNKNOWN`)과 복구 (#98)
+
+10/31·11/1 에 `Sit` 이 SDK 에서 거절됐는데도 Agent 는 SIT 전송 시점부터 앉음(`sitting=true`)으로
+간주했다. 그 뒤 HELLO 는 "after SIT" 로 거부되고, STAND 는 서 있는 로봇에 `RiseSit` 을 보내 다시
+거절되어 재시작 전까지 잠겼다.
+
+- POSTURE(SIT/STAND)·PRESET 이 실패(SDK 거절·예외)하거나 STAND 가 취소되면 추적 자세를 버리고
+  `UNKNOWN` 으로 둔다. MOVE 실패는 자세를 바꾸지 않는다.
+- `UNKNOWN` 동안 물리 명령이 있는 프로그램은 dispatch 전에 모두 거부된다(맹목적인 `RiseSit`·`StandUp`
+  없음). WAIT 만 있는 프로그램은 허용된다. `physical.state` 는 `NOT_READY`, `reasons` 에
+  `POSTURE_UNKNOWN`, `trial.posture`·`trial.postureUnknownReason` 에 상태와 원인이 보인다.
+- 실제 자세 재조회: adapter 가 읽기 전용 `observed_posture()`(SIT/STAND/모름)를 제공하면 실패 직후,
+  READY 계산 때, 다음 실행 승인 때 자동으로 다시 읽고 그 값으로 동기화한다. 로봇이 답하지 않으면
+  `UNKNOWN` 이 유지된다. adapter 가 있으면 시작 시 자세도 이 값으로 정한다.
+- 현재 `develop` 의 `UnitreeGo2Adapter` 는 `rt/lowstate` 만 구독하므로 `observed_posture()` 가 없다.
+  `rt/sportmodestate`(`mode`) 기반 구현은 #97 구독 위에서 실기 확인 후 추가한다.
+- 그 전까지 운영자 복구: 리모컨으로 로봇이 **서 있는 것을 눈으로 확인**한 뒤 Agent 를 재시작한다
+  (재시작 시 서 있음으로 시작). 앉아 있으면 리모컨으로 먼저 세운다.
 
 ## SDK 매핑
 

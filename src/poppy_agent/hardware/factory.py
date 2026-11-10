@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
+from poppy_agent.command import Posture
 from poppy_agent.config.open_motion import PRESET_SDK_METHODS, OpenMotionSettings
 from poppy_agent.config.physical_trial import PhysicalTrialSettings
 from poppy_agent.execution.cancellation import ExecutionCancellationToken
@@ -169,12 +170,14 @@ def create_open_motion_executor(
     sport_client_factory: Callable[[], object] | None = None,
     timing: MotionStreamTiming | None = None,
     now: Callable[[], datetime] | None = None,
+    posture_probe: Callable[[], Posture | None] | None = None,
 ) -> OpenMotionExecution:
     """Create the ``controlled_motion_open`` executor after the readiness gate passes.
 
     Evidence is derived only from validated ``settings``; the gate runs before
     any SDK object is constructed.  ``sport_client_factory``, ``timing`` and
-    ``now`` are test seams; production passes none of them.
+    ``now`` are test seams; production passes none of them.  ``posture_probe``
+    reads the actual posture from read-only Robot state (``None`` when unknown).
     """
     evidence = (
         open_motion_readiness_evidence(settings, command_client_kind=PhysicalCommandClientKind.REAL)
@@ -187,7 +190,9 @@ def create_open_motion_executor(
     )
     assert settings is not None
     clock = now or (lambda: datetime.now(UTC))
-    guard = OpenMotionGuard(settings, telemetry_fresh=telemetry_fresh, now=clock)
+    guard = OpenMotionGuard(
+        settings, telemetry_fresh=telemetry_fresh, now=clock, posture_probe=posture_probe
+    )
     stream_timing = timing or MotionStreamTiming()
     client = UnitreeSdkCommandClient(
         sdk_client_factory=sport_client_factory,
