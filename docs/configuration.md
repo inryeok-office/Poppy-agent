@@ -28,6 +28,7 @@ Current placeholders:
   `OFFLINE`; it is not a physical safety limit. The approved GO2EDU001 deployment
   value is `5.0` seconds; an existing Unitree EnvironmentFile must receive this
   non-secret key before this Agent version is started.
+- `POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S`: (선택, `controlled_motion_open`) 이동·회전 직후 PRESET·POSTURE 전에 기다리는 초. 기본 `2.0`, `0` 이면 끔. `docs/controlled-motion-open.md` 참고.
 - `POPPY_PHYSICAL_TRIAL_MODE`, `POPPY_PHYSICAL_TURN_RATE_DEG_PER_S`,
   `POPPY_PHYSICAL_MAX_TURN_DEG_PER_COMMAND`, `POPPY_PHYSICAL_MAX_TOTAL_TURN_DEG`,
   `POPPY_PHYSICAL_MAX_TOTAL_SECONDS`, `POPPY_PHYSICAL_MAX_COMMANDS`,

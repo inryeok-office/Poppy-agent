@@ -55,6 +55,7 @@ EXECUTION_PHYSICAL_TURN_FINISHED = "execution_physical_turn_finished"
 EXECUTION_PHYSICAL_TRIAL_LOCKED = "execution_physical_trial_locked"
 EXECUTION_PHYSICAL_ACTION_STARTED = "execution_physical_action_started"
 EXECUTION_PHYSICAL_ACTION_FINISHED = "execution_physical_action_finished"
+EXECUTION_PHYSICAL_SETTLE = "execution_physical_settle"
 
 _ALLOWED_CONTEXT = frozenset(
     {
