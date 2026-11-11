@@ -25,6 +25,8 @@ MAX_TOTAL_SECONDS_PER_EXECUTION = 120.0
 MAX_SETTLE_SECONDS = 15.0
 SETTLE_BEFORE_ACTION_ENVIRONMENT_KEY = "POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S"
 DEFAULT_SETTLE_BEFORE_ACTION_SECONDS = 2.0
+BALANCE_BEFORE_PRESET_ENVIRONMENT_KEY = "POPPY_PHYSICAL_BALANCE_BEFORE_PRESET_SETTLE_S"
+DEFAULT_BALANCE_BEFORE_PRESET_SETTLE_SECONDS = 2.0
 # The approval window is at most eight hours (teacher approval extended on 2026-10-29);
 # a longer expiry is a configuration error.
 MAX_APPROVAL_WINDOW = timedelta(hours=8, minutes=5)
@@ -80,6 +82,7 @@ class OpenMotionSettings:
     approval_ref: str
     expires_at: datetime
     settle_before_action_seconds: float = DEFAULT_SETTLE_BEFORE_ACTION_SECONDS
+    balance_before_preset_settle_seconds: float = DEFAULT_BALANCE_BEFORE_PRESET_SETTLE_SECONDS
 
 
 def load_open_motion_settings(
@@ -145,7 +148,15 @@ def load_open_motion_settings(
         issues.append("POPPY_PHYSICAL_APPROVAL_REF must be printable and at most 120 characters")
 
     expires_at = _expiry(raw["POPPY_PHYSICAL_TRIAL_EXPIRES_AT"], now(), issues)
-    settle_before_action = _optional_settle(values, issues)
+    settle_before_action = _optional_settle(
+        values, SETTLE_BEFORE_ACTION_ENVIRONMENT_KEY, DEFAULT_SETTLE_BEFORE_ACTION_SECONDS, issues
+    )
+    balance_before_preset = _optional_settle(
+        values,
+        BALANCE_BEFORE_PRESET_ENVIRONMENT_KEY,
+        DEFAULT_BALANCE_BEFORE_PRESET_SETTLE_SECONDS,
+        issues,
+    )
 
     if issues:
         return None, tuple(issues)
@@ -171,31 +182,29 @@ def load_open_motion_settings(
             approval_ref=approval_ref,
             expires_at=expires_at,
             settle_before_action_seconds=settle_before_action,
+            balance_before_preset_settle_seconds=balance_before_preset,
         ),
         (),
     )
 
 
-def _optional_settle(values: Mapping[str, str], issues: list[str]) -> float:
-    """Optional wait before PRESET/POSTURE after MOVE/TURN; unset keeps the default, 0 disables."""
-    value = values.get(SETTLE_BEFORE_ACTION_ENVIRONMENT_KEY, "").strip()
+def _optional_settle(
+    values: Mapping[str, str], key: str, default: float, issues: list[str]
+) -> float:
+    """Optional seconds setting: unset keeps the default, 0 disables, at most the settle limit."""
+    value = values.get(key, "").strip()
     if not value:
-        return DEFAULT_SETTLE_BEFORE_ACTION_SECONDS
+        return default
     try:
         parsed = float(value)
     except ValueError:
         parsed = math.nan
     if not math.isfinite(parsed) or parsed < 0:
-        issues.append(
-            f"{SETTLE_BEFORE_ACTION_ENVIRONMENT_KEY} must be a finite number of 0 or more"
-        )
-        return DEFAULT_SETTLE_BEFORE_ACTION_SECONDS
+        issues.append(f"{key} must be a finite number of 0 or more")
+        return default
     if parsed > MAX_SETTLE_SECONDS + 1e-9:
-        issues.append(
-            f"{SETTLE_BEFORE_ACTION_ENVIRONMENT_KEY} exceeds the approved limit of "
-            f"{MAX_SETTLE_SECONDS:g}"
-        )
-        return DEFAULT_SETTLE_BEFORE_ACTION_SECONDS
+        issues.append(f"{key} exceeds the approved limit of {MAX_SETTLE_SECONDS:g}")
+        return default
     return parsed
 
 
@@ -254,7 +263,9 @@ def _expiry(value: str, now: datetime, issues: list[str]) -> datetime | None:
 
 
 __all__ = [
+    "BALANCE_BEFORE_PRESET_ENVIRONMENT_KEY",
     "CONTROLLED_MOTION_OPEN_MODE",
+    "DEFAULT_BALANCE_BEFORE_PRESET_SETTLE_SECONDS",
     "DEFAULT_SETTLE_BEFORE_ACTION_SECONDS",
     "MAX_LINEAR_SPEED_METERS_PER_SECOND",
     "MAX_TOTAL_MOVE_METERS_PER_EXECUTION",

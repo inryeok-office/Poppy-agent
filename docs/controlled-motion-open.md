@@ -22,6 +22,7 @@
 | `POPPY_PHYSICAL_ALLOWED_PRESETS` | `HELLO,STRETCH,HEART,DANCE1` | 아래 매핑 표의 부분집합 |
 | `POPPY_PHYSICAL_TURN_LEFT_YAW_SIGN` | `+1` (2026-10-28 실기 검증) | `+1`/`-1` |
 | `POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S` | (선택) 기본 `2.0` | 0 이상 15 이하, `0` 이면 끔 |
+| `POPPY_PHYSICAL_BALANCE_BEFORE_PRESET_SETTLE_S` | (선택) 기본 `2.0` | 0 이상 15 이하, `0` 이면 사전 BalanceStand 를 끔 |
 | `POPPY_PHYSICAL_APPROVAL_REF` | 승인 기록 식별자 | 출력 가능 120자 |
 | `POPPY_PHYSICAL_TRIAL_EXPIRES_AT` | 만료 시각(ISO 8601, offset 필수) | 시작 시점 기준 미래, 8시간 5분 이내 (2026-10-29 교사 승인 최대 8시간으로 연장) |
 
@@ -95,3 +96,21 @@ PRESET·POSTURE 는 직전에 MOVE·TURN 이 있었으면 **모션이 끝난 시
   최대를 넘기면 `execution_physical_settle`(`MAX_WAIT_EXCEEDED`) 경고를 남기고 진행한다.
   develop 에서는 `rt/lowstate` 만 구독하므로 아직 연결되어 있지 않다.
 - 로그: `execution_physical_settle` (`action`, `execution_status`=`SETTLED`/`MAX_WAIT_EXCEEDED`, `elapsed_seconds`).
+
+### 이동 뒤 PRESET 은 BalanceStand 로 기본 자세를 먼저 잡는다 (#120, 2차)
+
+같은 날 1초 대기를 넣고 다시 돌린 실기 로그: 대기는 정확히 반영됐는데 `HELLO` 가 **시작 5.0초 뒤** `FAILED` 였다
+(`Hello,BalanceStand` 중 Hello 를 보내고 5초 정착 대기를 거친 뒤 **뒤따르는 BalanceStand** 가 실패한 것과 같은 시각).
+인사만 단독으로는 성공한다. 그래서 이동·회전 직후의 PRESET 은 다음 순서로 보낸다.
+
+```
+(정지 대기) → BalanceStand → 대기(POPPY_PHYSICAL_BALANCE_BEFORE_PRESET_SETTLE_S, 기본 2.0) → PRESET → 정착 대기 → BalanceStand
+```
+
+- 직전에 MOVE·TURN 이 없었으면 예전 그대로 `PRESET → 정착 대기 → BalanceStand`(인사 → 하트처럼 이어지는 PRESET 도 그대로).
+- 사전 BalanceStand 가 실패하면 PRESET 을 보내지 않고 그 실행을 실패로 끝낸다. 어느 경우든 다음 실행은 막히지 않는다(테스트로 고정).
+- `POPPY_PHYSICAL_BALANCE_BEFORE_PRESET_SETTLE_S=0` 이면 사전 BalanceStand 를 끄고 1차 수정(정지 대기만) 동작으로 돌아간다.
+- **호출 단위 로그** `execution_physical_sdk_call`: 어떤 SDK 호출(`sdk_operation`)이 `OK`/`FAILED` 였는지와 SDK 반환 코드(`sdk_result_code`)를
+  한 줄씩 남긴다(`Move`·`StopMove` 는 모션 요약 로그가 있어 제외). 실패한 호출이 Hello 인지 BalanceStand 인지 이 로그로 구분한다.
+- 자세·모드를 읽는 텔레메트리(`rt/sportmodestate`)는 develop 에서 구독하지 않아 "기본 자세가 된 것을 확인하고 진행"은 아직 못 한다.
+  연결되면 사전 BalanceStand 뒤의 고정 대기를 그 확인으로 바꾼다(후속).

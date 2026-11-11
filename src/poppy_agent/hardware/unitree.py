@@ -183,6 +183,10 @@ class OpenMotionActions:
     # still stopping (2026-11-11: HELLO failed 0.1 s after StopMove).  Wait this long, counted
     # from the end of the motion, before the next PRESET/POSTURE.  0 disables the wait.
     settle_before_action_seconds: float = 2.0
+    # After MOVE/TURN the SDK did not complete the next PRESET (2026-11-11 17:09: Hello was
+    # accepted, then BalanceStand failed 5 s later).  So a PRESET that follows a motion first takes
+    # the base stance (BalanceStand), waits this long, then sends the PRESET.  0 disables.
+    balance_before_preset_settle_seconds: float = 2.0
     clock: Callable[[], float] = time.monotonic
     # Optional read-only speed source (m/s, ``None`` = unknown).  When wired it replaces the
     # fixed wait: poll until the Robot is below the threshold (see SETTLE_* constants).
@@ -458,9 +462,19 @@ class UnitreeCommandBackend(HardwareCommandPort):
         preset = getattr(self._client, "preset", None)
         if method_name is None or not callable(preset):
             raise UnitreeCommandBackendError("PRESET code is not mapped")
+        after_motion = self._last_motion_ended_at is not None
         self._settle_before_action(code, cancellation_token)
-        self._log_action_started(code, (method_name, "BalanceStand"))
+        rebalance = after_motion and actions.balance_before_preset_settle_seconds > 0
+        operations = (
+            ("BalanceStand", method_name, "BalanceStand")
+            if rebalance
+            else (method_name, "BalanceStand")
+        )
+        self._log_action_started(code, operations)
         try:
+            if rebalance:
+                self._require_client_ok(self._balance_stand(), "BalanceStand")
+                actions.waiter(actions.balance_before_preset_settle_seconds, cancellation_token)
             self._require_client_ok(preset(method_name), method_name)
             actions.waiter(actions.preset_settle_seconds, cancellation_token)
             self._require_client_ok(self._balance_stand(), "BalanceStand")
