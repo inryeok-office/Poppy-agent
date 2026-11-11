@@ -114,3 +114,18 @@ PRESET·POSTURE 는 직전에 MOVE·TURN 이 있었으면 **모션이 끝난 시
   한 줄씩 남긴다(`Move`·`StopMove` 는 모션 요약 로그가 있어 제외). 실패한 호출이 Hello 인지 BalanceStand 인지 이 로그로 구분한다.
 - 자세·모드를 읽는 텔레메트리(`rt/sportmodestate`)는 develop 에서 구독하지 않아 "기본 자세가 된 것을 확인하고 진행"은 아직 못 한다.
   연결되면 사전 BalanceStand 뒤의 고정 대기를 그 확인으로 바꾼다(후속).
+
+### PRESET 호출 전용 SDK 대기 시간 60초와 실패 뒤 10초 보류 (#120, 3차)
+
+2026-11-11 실기: Dance1 이 `SDK_RC_3104`(클라이언트 10초 타임아웃)로 실패 보고됐지만 **로봇은 실제로 춤을 췄다.**
+PRESET 호출은 로봇이 동작을 끝낼 때까지 막히는 호출이다(실측 Hello 약 4.1초, Heart 약 5.3초, Dance1 10초 초과).
+또 이동 → 하트가 한 번 `SDK_RC_4201`(`SPORT_ERR_SERVER_OVERTIME`, 로봇 sport 서버가 돌려준 오류)로 실패했고 39초 뒤 같은 구성이 성공했다.
+
+- PRESET 호출에만 SDK 응답 대기를 **60초**(`PRESET_RPC_TIMEOUT_SECONDS`)로 늘리고, 호출이 끝나면(예외 포함) 원래 값(10초)으로 되돌린다.
+  `Move`·`BalanceStand` 등 다른 호출의 대기 시간은 바뀌지 않는다. 클라이언트 대기 시간이 설정되지 않았거나 이미 60초 이상이면 건드리지 않는다.
+- PRESET 이 **실패하면 10초간**(`OpenMotionActions.preset_failure_hold_seconds`) 다음 물리 명령(MOVE·TURN·POSTURE·PRESET)을 보내지 않는다.
+  타임아웃이든 서버 오류든 실패는 로봇이 멈췄다는 뜻이 아니다. 실패 시각부터 계산하므로 그 사이에 지난 시간은 차감하고,
+  보류 중 취소하면 아무것도 보내지 않는다. STOP 은 보류하지 않는다.
+- `UnitreeSdkCommandClient.last_result_code`: 마지막 SDK 호출의 정수 반환 코드(없으면 `None`).
+- 4201 의 원인은 아직 모른다. 이 수정은 4201 자체를 막지 않고, 실패한 PRESET 이 진행 중일 때 다음 명령이 겹치지 않게만 한다.
+- 실기 검증 필요(로봇 없이는 위 대기 시간이 실제 로봇에서 충분한지 확인할 수 없다).
