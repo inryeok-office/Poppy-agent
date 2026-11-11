@@ -45,7 +45,12 @@ OPEN_ENV = {
     "POPPY_PHYSICAL_TRIAL_MODE": "controlled_motion_open",
     "POPPY_PHYSICAL_LINEAR_SPEED_M_PER_S": "0.5",
     "POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND": "3.0",
-    "POPPY_PHYSICAL_MAX_TOTAL_MOVE_M": "4.0",
+    "POPPY_PHYSICAL_ARENA_WIDTH_M": "4.0",
+    "POPPY_PHYSICAL_ARENA_DEPTH_M": "4.0",
+    "POPPY_PHYSICAL_ARENA_MARGIN_M": "0.4",
+    "POPPY_PHYSICAL_START_X_M": "2.0",
+    "POPPY_PHYSICAL_START_Y_M": "0.4",
+    "POPPY_PHYSICAL_START_HEADING": "+Y",
     "POPPY_PHYSICAL_TURN_RATE_DEG_PER_S": "45",
     "POPPY_PHYSICAL_MAX_TURN_DEG_PER_COMMAND": "360",
     "POPPY_PHYSICAL_MAX_TOTAL_SECONDS": "120",
@@ -236,7 +241,11 @@ def run(trial: OpenMotionExecution, *commands: tuple):
 def test_complete_open_configuration_loads_exact_values() -> None:
     settings = open_settings()
     assert settings.linear_speed_meters_per_second == 0.5
-    assert settings.max_total_move_meters == 4.0
+    assert settings.arena_width_meters == 4.0
+    assert settings.arena_depth_meters == 4.0
+    assert settings.arena_margin_meters == 0.4
+    assert (settings.start_x_meters, settings.start_y_meters) == (2.0, 0.4)
+    assert settings.start_heading_degrees == 0.0
     assert settings.max_total_seconds == 120.0
     assert settings.turn_rate_degrees_per_second == 45.0
     assert settings.allowed_presets == frozenset({"HELLO", "STRETCH", "HEART", "DANCE1"})
@@ -252,8 +261,13 @@ def test_every_open_key_is_required_without_defaults(key: str) -> None:
     ("key", "value", "fragment"),
     [
         ("POPPY_PHYSICAL_LINEAR_SPEED_M_PER_S", "1.01", "approved limit of 1"),
-        ("POPPY_PHYSICAL_MAX_TOTAL_MOVE_M", "4.1", "approved limit of 4"),
-        ("POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND", "4.5", "approved limit of 4"),
+        ("POPPY_PHYSICAL_MAX_MOVE_M_PER_COMMAND", "3.1", "approved limit of 3"),
+        ("POPPY_PHYSICAL_ARENA_WIDTH_M", "6.1", "approved limit of 6"),
+        ("POPPY_PHYSICAL_ARENA_DEPTH_M", "6.1", "approved limit of 6"),
+        ("POPPY_PHYSICAL_ARENA_MARGIN_M", "0.3", "approved minimum of 0.4"),
+        ("POPPY_PHYSICAL_START_X_M", "3.7", "inside the arena margin"),
+        ("POPPY_PHYSICAL_START_Y_M", "0.3", "inside the arena margin"),
+        ("POPPY_PHYSICAL_START_HEADING", "UP", "one of +X"),
         ("POPPY_PHYSICAL_MAX_TOTAL_SECONDS", "121", "approved limit of 120"),
         ("POPPY_PHYSICAL_TURN_RATE_DEG_PER_S", "46", "approved limit of 45.8"),
         ("POPPY_PHYSICAL_MAX_TURN_DEG_PER_COMMAND", "361", "approved limit of 360"),
@@ -317,7 +331,8 @@ def test_move_streams_signed_vx_then_stop_move_three_times(
 ) -> None:
     clock = FakeClock()
     sport = FakeSportClient(clock)
-    result = run(build(clock, sport), move(0.5, direction))
+    settings = open_settings(POPPY_PHYSICAL_START_Y_M="1.0")
+    result = run(build(clock, sport, settings=settings), move(0.5, direction))
 
     assert result.status is ExecutionStatus.COMPLETED
     assert len(sport.moves) == 20  # 0.5 m / 0.5 m/s = 1.0 s at 50 ms
@@ -400,7 +415,7 @@ def test_preset_outside_configured_subset_is_rejected() -> None:
 @pytest.mark.parametrize(
     ("commands", "reason"),
     [
-        ((move(0.9),) * 5, "total MOVE distance"),
+        ((move(0.9),) * 5, "leaves the arena"),
         ((move(3.1),), "per-command limit"),
         ((turn(361),), "per-command limit"),
         ((wait(10),) * 13, "total motion time"),
@@ -419,6 +434,81 @@ def test_limit_violations_fail_before_any_dispatch(commands: tuple, reason: str)
     assert sport.names() == []
 
 
+def program(*commands: tuple) -> HighLevelCommandProgram:
+    return task(*commands).command_program
+
+
+def arena_plan(*commands: tuple) -> float:
+    guard = OpenMotionGuard(open_settings(), telemetry_fresh=lambda: True, now=lambda: START)
+    return guard.plan(program(*commands), sitting=False).move_meters
+
+
+LEFT = TurnDirection.LEFT
+RIGHT = TurnDirection.RIGHT
+BACKWARD = MoveDirection.BACKWARD
+
+
+def test_screenshot_case_fails_on_third_move_after_left_turn() -> None:
+    up = (move(0.6),) * 4
+    assert arena_plan(*up, turn(90, LEFT), *(move(0.6),) * 2) == pytest.approx(3.6)
+    with pytest.raises(OpenMotionGuardError, match="leaves the arena"):
+        arena_plan(*up, turn(90, LEFT), *(move(0.6),) * 3)
+    with pytest.raises(OpenMotionGuardError, match="leaves the arena"):
+        arena_plan(*up, turn(90, LEFT), *(move(0.6),) * 5)
+
+
+@pytest.mark.parametrize(
+    ("commands", "allowed"),
+    [
+        ((move(3.0), move(0.2)), True),  # y = 3.6, on the allowed edge
+        ((move(3.0), move(0.3)), False),  # y = 3.7
+        ((turn(90, RIGHT), move(1.6)), True),  # x = 3.6
+        ((turn(90, RIGHT), move(1.7)), False),  # x = 3.7
+        ((turn(90, LEFT), move(1.6)), True),  # x = 0.4
+        ((turn(90, LEFT), move(1.7)), False),  # x = 0.3
+        ((move(0.1, BACKWARD),), False),  # the start is on the bottom edge
+        ((move(1.0), move(1.0, BACKWARD)), True),
+        ((turn(180), move(0.1)), False),  # facing the bottom wall
+        ((turn(180), move(1.0, BACKWARD)), True),
+    ],
+)
+def test_arena_boundary_and_direction(commands: tuple, allowed: bool) -> None:
+    if allowed:
+        arena_plan(*commands)
+    else:
+        with pytest.raises(OpenMotionGuardError, match="leaves the arena"):
+            arena_plan(*commands)
+
+
+def test_left_turn_is_counterclockwise_and_right_turn_is_clockwise() -> None:
+    settings = open_settings(POPPY_PHYSICAL_START_X_M="0.4")
+    guard = OpenMotionGuard(settings, telemetry_fresh=lambda: True, now=lambda: START)
+
+    guard.plan(program(turn(90, RIGHT), move(3.0)), sitting=False)
+    with pytest.raises(OpenMotionGuardError, match="leaves the arena"):
+        guard.plan(program(turn(90, LEFT), move(0.1)), sitting=False)
+
+
+def test_six_meter_arena_from_bottom_right_corner() -> None:
+    settings = open_settings(
+        POPPY_PHYSICAL_ARENA_WIDTH_M="6.0",
+        POPPY_PHYSICAL_ARENA_DEPTH_M="6.0",
+        POPPY_PHYSICAL_START_X_M="5.6",
+    )
+    guard = OpenMotionGuard(settings, telemetry_fresh=lambda: True, now=lambda: START)
+    up = (move(0.6),) * 4
+
+    guard.plan(program(*up, turn(90, LEFT), *(move(0.6),) * 5), sitting=False)
+    with pytest.raises(OpenMotionGuardError, match="leaves the arena"):
+        guard.plan(program(turn(90, RIGHT), move(0.5)), sitting=False)
+    with pytest.raises(OpenMotionGuardError, match="leaves the arena"):
+        guard.plan(program(move(0.5, BACKWARD)), sitting=False)
+
+
+def test_total_distance_over_four_meters_is_allowed_inside_the_arena() -> None:
+    assert arena_plan(*(move(1.5), move(1.5, BACKWARD)) * 3) == pytest.approx(9.0)
+
+
 def test_disallowed_command_type_is_rejected() -> None:
     clock = FakeClock()
     sport = FakeSportClient(clock)
@@ -429,12 +519,12 @@ def test_disallowed_command_type_is_rejected() -> None:
     assert sport.names() == []
 
 
-def test_exactly_four_meters_and_stand_after_sit_are_allowed() -> None:
+def test_edge_of_arena_and_stand_after_sit_are_allowed() -> None:
     clock = FakeClock()
     sport = FakeSportClient(clock)
     trial = build(clock, sport)
 
-    assert run(trial, *((move(1.0),) * 4)).status is ExecutionStatus.COMPLETED
+    assert run(trial, move(3.0), move(0.2)).status is ExecutionStatus.COMPLETED
     sport.calls.clear()
     result = run(trial, posture(Posture.SIT), posture(Posture.STAND), move(0.5), STOP)
     assert result.status is ExecutionStatus.COMPLETED
@@ -460,9 +550,7 @@ def test_executions_are_unlimited_and_budget_resets_each_execution() -> None:
     sport = FakeSportClient(clock)
     trial = build(clock, sport)
     for _ in range(6):
-        assert run(trial, move(1.0), move(1.0), move(1.0), move(1.0)).status is (
-            ExecutionStatus.COMPLETED
-        )
+        assert run(trial, move(1.0), move(1.0), move(1.0)).status is ExecutionStatus.COMPLETED
     assert trial.guard.snapshot()["executionsAdmitted"] == 6
     assert trial.guard.available() is True
 
