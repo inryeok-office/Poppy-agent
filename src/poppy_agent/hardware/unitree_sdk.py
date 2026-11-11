@@ -34,6 +34,11 @@ from .unitree import UnitreeCommandClient
 
 logger = logging.getLogger(__name__)
 
+# A preset call blocks until the Robot finishes the action (Hello 4.1 s, Heart 5.3 s, Dance1 over
+# 10 s), so the 10 s client timeout reported a running Dance1 as failed (SDK_RC_3104).  Only preset
+# calls get this longer timeout; it is restored right after the call.
+PRESET_RPC_TIMEOUT_SECONDS = 60.0
+
 # Streamed every 50 ms or summarized by the motion trace; logging each call would flood the log.
 _UNLOGGED_SDK_OPERATIONS = frozenset({"Move", "StopMove"})
 
@@ -224,6 +229,8 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
             lambda: default_unitree_sport_client_factory(network_interface, rpc_timeout_seconds)
         )
         self._motion_mapper = motion_mapper
+        self._rpc_timeout_seconds = rpc_timeout_seconds
+        self.last_result_code: int | None = None
         self._timing = timing or MotionStreamTiming()
         self.last_motion_trace: MotionStreamTrace | None = None
         self._initialized = False
@@ -282,7 +289,19 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
         """Call one allow-listed official preset method (Hello, Stretch, Heart, Dance1)."""
         if method_name not in _PRESET_METHOD_NAMES:
             raise UnitreeSdkCommandError("preset method is not allow-listed")
-        return self._call_operation(method_name)
+        set_timeout = getattr(self._sdk_client, "SetTimeout", None)
+        default_timeout = self._rpc_timeout_seconds
+        if (
+            not callable(set_timeout)
+            or default_timeout is None
+            or PRESET_RPC_TIMEOUT_SECONDS <= default_timeout
+        ):
+            return self._call_operation(method_name)
+        set_timeout(PRESET_RPC_TIMEOUT_SECONDS)
+        try:
+            return self._call_operation(method_name)
+        finally:
+            set_timeout(default_timeout)
 
     def execute_motion(self, plan: MotionPlan) -> bool:
         """Call ``Move`` only with explicitly supplied SDK-shaped arguments."""
@@ -412,6 +431,7 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
         method = getattr(client, method_name, None)
         if not callable(method):
             raise UnitreeSdkCommandError(f"Unitree SDK client does not provide {method_name}")
+        self.last_result_code = None
         try:
             result = method(*args)
         except Exception as exc:
@@ -420,6 +440,7 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
                 f"Unitree SDK {method_name} failed: {type(exc).__name__}"
             ) from exc
         result_code = result if type(result) is int else None
+        self.last_result_code = result_code
         try:
             normalized = _normalize_result(result, method_name)
         except UnitreeSdkCommandError:

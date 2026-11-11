@@ -118,6 +118,10 @@ class FakeSportClient:
         self.move_error_at = move_error_at
         self.fail_codes = dict(fail_codes or {})
         self.calls: list[tuple[str, tuple[float, ...]]] = []
+        self.timeouts: list[float] = []
+
+    def SetTimeout(self, seconds: float) -> None:
+        self.timeouts.append(seconds)
 
     def _record(self, name: str, *args: float) -> int:
         self.calls.append((name, args))
@@ -984,3 +988,85 @@ def test_successful_sequence_logs_each_call_in_order(caplog: pytest.LogCaptureFi
         ("Hello", "OK"),
         ("BalanceStand", "OK"),
     ]
+
+
+def test_preset_failure_holds_the_next_physical_command_for_ten_seconds() -> None:
+    # 2026-11-11: Dance1 was reported failed (SDK_RC_3104) while the Robot kept dancing.
+    clock = FakeClock()
+    sport = FakeSportClient(clock, fail_codes={"Hello": 4201})
+    trial = build(clock, sport)
+
+    assert run(trial, preset("HELLO")).status is ExecutionStatus.FAILED
+    sport.fail_codes.clear()
+    sport.calls.clear()
+    clock.waits.clear()
+
+    assert run(trial, move(0.5)).status is ExecutionStatus.COMPLETED
+    assert clock.waits[0] == pytest.approx(10.0)
+    assert sport.names()[0] == "Move"
+
+    clock.waits.clear()
+    assert run(trial, move(0.5)).status is ExecutionStatus.COMPLETED
+    assert 10.0 not in [round(w, 6) for w in clock.waits]
+
+
+def test_time_already_passed_after_a_preset_failure_counts_toward_the_hold() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock, fail_codes={"Hello": 4201})
+    trial = build(clock, sport)
+
+    assert run(trial, preset("HELLO")).status is ExecutionStatus.FAILED
+    sport.fail_codes.clear()
+    clock.advance(30.0)
+    clock.waits.clear()
+
+    assert run(trial, preset("HEART")).status is ExecutionStatus.COMPLETED
+    assert clock.waits == [5.0]
+
+
+def test_failed_base_stance_before_a_preset_also_holds_the_next_command() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock, fail_codes={"BalanceStand": 3203})
+    trial = build(clock, sport)
+
+    assert run(trial, move(0.5), preset("HELLO")).status is ExecutionStatus.FAILED
+    sport.fail_codes.clear()
+    clock.waits.clear()
+    assert run(trial, preset("HELLO")).status is ExecutionStatus.COMPLETED
+    assert clock.waits[0] == pytest.approx(10.0)
+
+
+def test_cancellation_during_the_failure_hold_sends_nothing() -> None:
+    clock = FakeClock(cancel_after_waits=1)
+    sport = FakeSportClient(clock, fail_codes={"Hello": 4201})
+    trial = build(clock, sport)
+
+    assert run(trial, preset("HELLO")).status is ExecutionStatus.FAILED
+    sport.fail_codes.clear()
+    sport.calls.clear()
+    clock.cancel_after_waits = len(clock.waits) + 1
+
+    result = trial.executor.execute(task(preset("HEART")), ExecutionCancellationToken())
+    assert result.status is ExecutionStatus.CANCELLED
+    assert sport.names() == []
+
+
+def test_only_preset_calls_get_the_long_sdk_timeout_and_it_is_restored() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    trial = build(clock, sport)
+
+    assert run(trial, preset("DANCE1")).status is ExecutionStatus.COMPLETED
+    assert sport.timeouts == [60.0, 10.0]
+    sport.timeouts.clear()
+    assert run(trial, move(0.5)).status is ExecutionStatus.COMPLETED
+    assert sport.timeouts == []
+
+
+def test_long_sdk_timeout_is_restored_when_the_preset_fails() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock, fail_codes={"Dance1": 4201})
+    trial = build(clock, sport)
+
+    assert run(trial, preset("DANCE1")).status is ExecutionStatus.FAILED
+    assert sport.timeouts == [60.0, 10.0]
