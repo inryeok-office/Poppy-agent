@@ -21,6 +21,7 @@
 | `POPPY_PHYSICAL_ALLOWED_COMMANDS` | `MOVE,TURN,POSTURE,PRESET` | 이 네 값의 부분집합 |
 | `POPPY_PHYSICAL_ALLOWED_PRESETS` | `HELLO,STRETCH,HEART,DANCE1` | 아래 매핑 표의 부분집합 |
 | `POPPY_PHYSICAL_TURN_LEFT_YAW_SIGN` | `+1` (2026-10-28 실기 검증) | `+1`/`-1` |
+| `POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S` | (선택) 기본 `2.0` | 0 이상 15 이하, `0` 이면 끔 |
 | `POPPY_PHYSICAL_APPROVAL_REF` | 승인 기록 식별자 | 출력 가능 120자 |
 | `POPPY_PHYSICAL_TRIAL_EXPIRES_AT` | 만료 시각(ISO 8601, offset 필수) | 시작 시점 기준 미래, 8시간 5분 이내 (2026-10-29 교사 승인 최대 8시간으로 연장) |
 
@@ -77,3 +78,20 @@
 - 배포: `/home/poppy/prepared/` 의 r7 배포 스크립트(physical=false 로 배포, 자동 롤백·재시작 보류 규칙).
 - 전환: `poppy-agent-open-trial-switch.sh on|off|check` — `on` 은 만료 시각을 넣고 physical=true 로
   재시작한 뒤 READY 를 확인, `off` 는 physical=false 로 되돌린다.
+
+## 이동 직후 PRESET·POSTURE 전 정지 대기 (#120)
+
+2026-11-11 실기에서 MOVE 가 끝나고 0.1초 뒤 보낸 HELLO 를 SDK 가 거절했다(로봇이 아직 멈추는 중).
+PRESET·POSTURE 는 직전에 MOVE·TURN 이 있었으면 **모션이 끝난 시각부터** `POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S`
+초(기본 2.0) 지난 뒤에 보낸다.
+
+- 모션 종료와 명령 사이에 WAIT 블록이 있으면 그 시간은 이미 기다린 것으로 센다(모자란 만큼만 더 기다린다).
+- 한 번의 모션 뒤에는 한 번만 기다린다(인사 → 하트처럼 이어지는 PRESET 앞에서 다시 기다리지 않는다).
+- 이 대기 중 취소하면 로봇에 아무 명령도 보내지 않고 취소된다.
+- **실행 시간 상한(`POPPY_PHYSICAL_MAX_TOTAL_SECONDS`) 계산에 넣지 않는다.** 상한은 계획된 모션 시간의 합이고, 이 대기는 로봇이 정지한 유휴 시간이다.
+- 설정하지 않아도 기본 2.0초로 동작한다. 잘못된 값(음수·숫자 아님·15 초과)은 실기를 차단하고 사유(`configIssues`)에 보인다.
+- 읽기 전용 속도 값을 줄 수 있는 어댑터(예: `rt/sportmodestate`)가 연결되면 `OpenMotionActions.speed_probe` 로
+  고정 대기 대신 "속도 0.05 m/s 미만이 될 때까지, 최소 0.3초·최대 3초, 0.1초 간격"으로 기다리고,
+  최대를 넘기면 `execution_physical_settle`(`MAX_WAIT_EXCEEDED`) 경고를 남기고 진행한다.
+  develop 에서는 `rt/lowstate` 만 구독하므로 아직 연결되어 있지 않다.
+- 로그: `execution_physical_settle` (`action`, `execution_status`=`SETTLED`/`MAX_WAIT_EXCEEDED`, `elapsed_seconds`).

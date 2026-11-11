@@ -8,6 +8,7 @@ phase only provides the dependency-injected fake implementation.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -30,6 +31,7 @@ from poppy_agent.hardware.boundary import HardwareCommandIntent, HardwareCommand
 from poppy_agent.observability import (
     EXECUTION_PHYSICAL_ACTION_FINISHED,
     EXECUTION_PHYSICAL_ACTION_STARTED,
+    EXECUTION_PHYSICAL_SETTLE,
     EXECUTION_PHYSICAL_TRIAL_LOCKED,
     EXECUTION_PHYSICAL_TURN_FINISHED,
     EXECUTION_PHYSICAL_TURN_STARTED,
@@ -45,6 +47,14 @@ if TYPE_CHECKING:
 ActionWaiter = Callable[[float, "ExecutionCancellationToken | None"], None]
 
 logger = logging.getLogger(__name__)
+
+# Speed-probe settle (used only when a read-only speed source is wired): wait until the
+# robot is slower than the threshold, never less than the minimum, never more than the maximum.
+SETTLE_MIN_SECONDS = 0.3
+SETTLE_MAX_SECONDS = 3.0
+SETTLE_POLL_SECONDS = 0.1
+SETTLE_SPEED_THRESHOLD_METERS_PER_SECOND = 0.05
+_SETTLE_CLOCK_TOLERANCE_SECONDS = 1e-6
 
 
 class UnitreeCommandOperation(StrEnum):
@@ -169,6 +179,14 @@ class OpenMotionActions:
     preset_settle_seconds: float
     preset_methods: Mapping[str, str]
     guard: OpenMotionGuard
+    # PRESET/POSTURE sent right after MOVE/TURN are rejected by the SDK while the Robot is
+    # still stopping (2026-11-11: HELLO failed 0.1 s after StopMove).  Wait this long, counted
+    # from the end of the motion, before the next PRESET/POSTURE.  0 disables the wait.
+    settle_before_action_seconds: float = 2.0
+    clock: Callable[[], float] = time.monotonic
+    # Optional read-only speed source (m/s, ``None`` = unknown).  When wired it replaces the
+    # fixed wait: poll until the Robot is below the threshold (see SETTLE_* constants).
+    speed_probe: Callable[[], float | None] | None = None
 
 
 class UnitreeCommandBackend(HardwareCommandPort):
@@ -196,6 +214,7 @@ class UnitreeCommandBackend(HardwareCommandPort):
         self._sleeper = sleeper
         self._trial_guard = trial_guard
         self._open_actions = open_actions
+        self._last_motion_ended_at: float | None = None
         self._initialized = False
 
     @property
@@ -271,26 +290,10 @@ class UnitreeCommandBackend(HardwareCommandPort):
             self._dispatch_preset(intent, cancellation_token)
             return False
         if intent.type in {CommandType.MOVE, CommandType.TURN}:
-            # An injected sleeper keeps the legacy single-call timing; otherwise
-            # the client must stream the motion and own its duration.
-            streaming = self._streaming_motion if self._sleeper is None else None
-            if self._motion_strategy is not None and streaming is not None:
-                self._dispatch_streaming_motion(
-                    self._motion_strategy.plan(intent), streaming, cancellation_token
-                )
-                return False
-            if self._motion_strategy is None or self._sleeper is None:
-                raise UnitreeCommandBackendError(
-                    f"Unitree command mapping is unsupported for {intent.type.value}"
-                )
-            plan = self._motion_strategy.plan(intent)
-            result = self._client.execute_motion(plan)
-            if result is not True:
-                raise UnitreeCommandBackendError(
-                    f"Unitree client reported failure for {intent.type.value}",
-                    failure_code=FailureCode.SDK_REJECTED,
-                )
-            self._sleeper.sleep(plan.duration_seconds, cancellation_token)
+            try:
+                self._dispatch_motion(intent, cancellation_token)
+            finally:
+                self._note_motion_ended()
             return False
         if not isinstance(intent.parameters, PostureParameters):
             raise UnitreeCommandBackendError("POSTURE intent does not have typed parameters")
@@ -308,6 +311,98 @@ class UnitreeCommandBackend(HardwareCommandPort):
             )
         return False
 
+    def _dispatch_motion(
+        self,
+        intent: HardwareCommandIntent,
+        cancellation_token: ExecutionCancellationToken | None,
+    ) -> None:
+        """MOVE/TURN: stream through the client, or fall back to the legacy single call."""
+        # An injected sleeper keeps the legacy single-call timing; otherwise
+        # the client must stream the motion and own its duration.
+        streaming = self._streaming_motion if self._sleeper is None else None
+        if self._motion_strategy is not None and streaming is not None:
+            self._dispatch_streaming_motion(
+                self._motion_strategy.plan(intent), streaming, cancellation_token
+            )
+            return
+        if self._motion_strategy is None or self._sleeper is None:
+            raise UnitreeCommandBackendError(
+                f"Unitree command mapping is unsupported for {intent.type.value}"
+            )
+        plan = self._motion_strategy.plan(intent)
+        result = self._client.execute_motion(plan)
+        if result is not True:
+            raise UnitreeCommandBackendError(
+                f"Unitree client reported failure for {intent.type.value}",
+                failure_code=FailureCode.SDK_REJECTED,
+            )
+        self._sleeper.sleep(plan.duration_seconds, cancellation_token)
+
+    def _note_motion_ended(self) -> None:
+        """Remember when the last MOVE/TURN ended, whatever its outcome (StopMove ran)."""
+        if self._open_actions is not None:
+            self._last_motion_ended_at = self._open_actions.clock()
+
+    def _settle_before_action(
+        self, action: str, cancellation_token: ExecutionCancellationToken | None
+    ) -> None:
+        """Let the Robot finish stopping before a PRESET/POSTURE that follows MOVE/TURN.
+
+        Time between the motion end and now (for example a WAIT block) counts as settled.
+        Nothing is sent to the Robot here, so a cancel during the wait needs no lock.
+        """
+        actions = self._open_actions
+        ended_at = self._last_motion_ended_at
+        if actions is None or ended_at is None:
+            return
+        if actions.speed_probe is not None:
+            self._settle_by_speed(action, actions, ended_at, cancellation_token)
+        else:
+            remaining = actions.settle_before_action_seconds - (actions.clock() - ended_at)
+            if remaining > 0:
+                actions.waiter(remaining, cancellation_token)
+                self._log_settle(action, "SETTLED", remaining)
+        self._last_motion_ended_at = None
+
+    def _settle_by_speed(
+        self,
+        action: str,
+        actions: OpenMotionActions,
+        ended_at: float,
+        cancellation_token: ExecutionCancellationToken | None,
+    ) -> None:
+        probe = actions.speed_probe
+        assert probe is not None
+        while True:
+            elapsed = actions.clock() - ended_at
+            if elapsed + _SETTLE_CLOCK_TOLERANCE_SECONDS >= SETTLE_MIN_SECONDS:
+                speed = probe()
+                if speed is not None and abs(speed) < SETTLE_SPEED_THRESHOLD_METERS_PER_SECOND:
+                    self._log_settle(action, "SETTLED", elapsed)
+                    return
+            if elapsed + _SETTLE_CLOCK_TOLERANCE_SECONDS >= SETTLE_MAX_SECONDS:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    EXECUTION_PHYSICAL_SETTLE,
+                    action=action,
+                    execution_status="MAX_WAIT_EXCEEDED",
+                    elapsed_seconds=elapsed,
+                    duration_seconds=SETTLE_MAX_SECONDS,
+                )
+                return
+            actions.waiter(SETTLE_POLL_SECONDS, cancellation_token)
+
+    def _log_settle(self, action: str, status: str, seconds: float) -> None:
+        log_event(
+            logger,
+            logging.INFO,
+            EXECUTION_PHYSICAL_SETTLE,
+            action=action,
+            execution_status=status,
+            elapsed_seconds=seconds,
+        )
+
     def _dispatch_open_posture(
         self, posture: Posture, cancellation_token: ExecutionCancellationToken | None
     ) -> None:
@@ -319,6 +414,7 @@ class UnitreeCommandBackend(HardwareCommandPort):
         """
         actions = self._open_actions
         assert actions is not None
+        self._settle_before_action(posture.value, cancellation_token)
         rise_from_sit = posture is Posture.STAND and actions.guard.sitting()
         if posture is Posture.SIT:
             operations: tuple[str, ...] = ("Sit",)
@@ -362,6 +458,7 @@ class UnitreeCommandBackend(HardwareCommandPort):
         preset = getattr(self._client, "preset", None)
         if method_name is None or not callable(preset):
             raise UnitreeCommandBackendError("PRESET code is not mapped")
+        self._settle_before_action(code, cancellation_token)
         self._log_action_started(code, (method_name, "BalanceStand"))
         try:
             self._require_client_ok(preset(method_name), method_name)
