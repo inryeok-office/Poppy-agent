@@ -67,6 +67,8 @@ class OpenMotionGuard:
         now: Callable[[], datetime],
     ) -> None:
         self._settings = settings
+        # An arena update that arrives while an Execution runs is applied only after it ends.
+        self._pending_settings: OpenMotionSettings | None = None
         self._telemetry_fresh = telemetry_fresh
         self._now = now
         self._lock = Lock()
@@ -81,6 +83,20 @@ class OpenMotionGuard:
     @property
     def settings(self) -> OpenMotionSettings:
         return self._settings
+
+    def apply_arena(self, settings: OpenMotionSettings) -> bool:
+        """Swap in narrowed settings between Executions; returns whether applied now.
+
+        Callers must pass settings built by ``narrow_arena`` (never wider than the baseline).
+        An Execution in progress keeps the values it was admitted under.
+        """
+        with self._lock:
+            if self._executing:
+                self._pending_settings = settings
+                return False
+            self._settings = settings
+            self._pending_settings = None
+            return True
 
     def expired(self) -> bool:
         return self._now() >= self._settings.expires_at
@@ -119,7 +135,7 @@ class OpenMotionGuard:
                 y += sign * parameters.distance_meters * math.cos(math.radians(heading))
                 # The allowed area is convex and each segment starts inside it, so an
                 # end point inside means the whole segment is inside.
-                if not self._inside_arena(x, y):
+                if not self._inside_arena(settings, x, y):
                     raise OpenMotionGuardError("MOVE leaves the arena")
                 seconds += parameters.distance_meters / settings.linear_speed_meters_per_second
             elif command.type is CommandType.TURN:
@@ -154,8 +170,8 @@ class OpenMotionGuard:
             raise OpenMotionGuardError("total motion time exceeds the per-Execution limit")
         return OpenMotionPlanSummary(physical, move_meters, seconds)
 
-    def _inside_arena(self, x: float, y: float) -> bool:
-        settings = self._settings
+    @staticmethod
+    def _inside_arena(settings: OpenMotionSettings, x: float, y: float) -> bool:
         margin = settings.arena_margin_meters
         return (
             margin - 1e-9 <= x <= settings.arena_width_meters - margin + 1e-9
@@ -179,6 +195,9 @@ class OpenMotionGuard:
     def release(self) -> None:
         with self._lock:
             self._executing = False
+            if self._pending_settings is not None:
+                self._settings = self._pending_settings
+                self._pending_settings = None
 
     def lock(self, reason: str) -> None:
         """Record an unknown outcome; only that Execution fails in this mode."""

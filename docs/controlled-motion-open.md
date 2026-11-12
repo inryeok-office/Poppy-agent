@@ -88,3 +88,13 @@
 - 배포: `/home/poppy/prepared/` 의 r7 배포 스크립트(physical=false 로 배포, 자동 롤백·재시작 보류 규칙).
 - 전환: `poppy-agent-open-trial-switch.sh on|off|check` — `on` 은 만료 시각을 넣고 physical=true 로
   재시작한 뒤 READY 를 확인, `off` 는 physical=false 로 되돌린다.
+
+## Server 체험 공간 설정 (선택, 기본 꺼짐)
+`POPPY_ARENA_SETTINGS_SYNC=true` 이면 Agent 가 Server 의 `GET /api/v1/arena-settings`(공개)를 시작 시 한 번, 이후 `POPPY_ARENA_SETTINGS_SYNC_INTERVAL_SECONDS`(기본 30, 최소 5)마다 읽는다. **꺼져 있으면 지금과 똑같이 환경변수 값만 쓴다.**
+
+- **환경변수가 승인된 상한(기준선)이다. Server 값은 좁히기만 한다.** 한 변이 기준선(그리고 하드 상한 6 m)보다 넓거나, 벽 여유가 기준선(그리고 하드 최소 0.4 m)보다 작거나, 출발점이 여유 밖이거나, 가용 영역이 1.3 m 미만이면 **전부 거부**하고 기준선을 쓴다. 일부만 받는 일은 없다.
+- 1회 이동 한도 = `min(환경변수 값, 3.0, 가용 영역 짧은 변 − 0.8 m(0.1 단위 내림), Server 가 준 값)`. Server 가 큰 값을 줘도 Agent 가 기하에서 따로 계산한다.
+- 만료·승인·속도·총 시간·허용 명령은 **Server 에서 받지 않는다.**
+- Server 에 연결이 안 되거나 응답이 이상하면 **마지막 수신값이 아니라 기준선(환경변수)** 으로 돌아간다. 실행 중인 Execution 은 시작할 때의 값을 끝까지 쓰고, 새 값은 `release()` 뒤에 적용된다.
+- ⚠️ 기준선이 6×6 인 채로 Server 가 3×3 이라 하면 연결이 끊길 때 6×6 으로 돌아간다. **부스 당일에는 환경변수도 3×3(벽 여유 0.5, 출발점 2.5/0.5, 1회 이동 1.2)으로 맞춰 두면** 연결이 끊겨도 3×3 이 유지되고 Server 가 6×6 을 줘도 거부된다.
+- 상태 확인: `physicalExecution` 에 `arenaSource`(`server`/`baseline`/`environment`)와 현재 `arena*` 값이 나온다.
