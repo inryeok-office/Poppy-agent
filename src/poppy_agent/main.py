@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from signal import Signals
-from threading import Event
+from threading import Event, Thread
 from types import FrameType
 from uuid import UUID
 
 from poppy_agent.agent import Agent, create_agent
 from poppy_agent.config import AgentConfig, ConfigurationError, OpenMotionSettings
 from poppy_agent.execution import MockExecutionExecutor, PhysicalExecutionBlockedError
+from poppy_agent.execution.arena_sync import DEFAULT_SYNC_INTERVAL_SECONDS, ArenaSettingsSync
+from poppy_agent.execution.open_motion import OpenMotionGuard
 from poppy_agent.hardware import create_controlled_trial_executor, create_open_motion_executor
 from poppy_agent.observability import (
     PHYSICAL_EXECUTION_BLOCKED,
@@ -59,10 +62,16 @@ def main() -> int:
         server = ServerClient(server_config)
         runtime = AgentServerRuntime(agent, server, server_config)
         executor = _create_executor(agent_config)
-        if executor is None and getattr(agent_config, "robot_mode", None) == "unitree":
-            executor = _create_physical_trial_executor(agent_config, agent, runtime)
-
         stop_event = Event()
+        if executor is None and getattr(agent_config, "robot_mode", None) == "unitree":
+            executor = _create_physical_trial_executor(
+                agent_config,
+                agent,
+                runtime,
+                arena_fetch=server.get_arena_settings,
+                stop_event=stop_event,
+            )
+
         register_signal_handlers(stop_event)
 
         runtime.start()
@@ -122,7 +131,12 @@ def _create_executor(config: AgentConfig) -> MockExecutionExecutor | None:
 
 
 def _create_physical_trial_executor(
-    config: AgentConfig, agent: Agent, runtime: AgentServerRuntime
+    config: AgentConfig,
+    agent: Agent,
+    runtime: AgentServerRuntime,
+    *,
+    arena_fetch: Callable[[], Mapping[str, object]] | None = None,
+    stop_event: Event | None = None,
 ) -> MockExecutionExecutor | None:
     """Return the controlled TURN trial executor, or ``None`` for heartbeat-only.
 
@@ -140,7 +154,13 @@ def _create_physical_trial_executor(
         return None
     if isinstance(config.physical_trial, OpenMotionSettings):
         return _create_open_motion_executor(
-            config, config.physical_trial, runtime, telemetry_fresh, set_command_readiness
+            config,
+            config.physical_trial,
+            runtime,
+            telemetry_fresh,
+            set_command_readiness,
+            arena_fetch=arena_fetch,
+            stop_event=stop_event,
         )
     try:
         trial = create_controlled_trial_executor(
@@ -204,6 +224,9 @@ def _create_open_motion_executor(
     runtime: AgentServerRuntime,
     telemetry_fresh: Callable[[], bool],
     set_command_readiness: Callable[[Callable[[], bool]], None],
+    *,
+    arena_fetch: Callable[[], Mapping[str, object]] | None = None,
+    stop_event: Event | None = None,
 ) -> MockExecutionExecutor | None:
     """Return the ``controlled_motion_open`` executor, or ``None`` for heartbeat-only."""
     try:
@@ -226,11 +249,13 @@ def _create_open_motion_executor(
         return None
 
     guard = trial.guard
+    arena_sync = _start_arena_sync(settings, guard, arena_fetch, stop_event)
 
     def command_ready() -> bool:
         return guard.available() and runtime.active_execution_id is None
 
     def physical_status() -> dict[str, object]:
+        settings = guard.settings  # the arena may have been narrowed by the Server since start
         if guard.expired():
             return {
                 "enabled": True,
@@ -263,6 +288,7 @@ def _create_open_motion_executor(
             "allowedCommands": sorted(settings.allowed_commands),
             "allowedPresets": sorted(settings.allowed_presets),
             "turnLeftYawSign": settings.turn_left_yaw_sign,
+            "arenaSource": arena_sync.last_source if arena_sync is not None else "environment",
             "trial": guard.snapshot(),
         }
 
@@ -277,6 +303,34 @@ def _create_open_motion_executor(
         approval_ref=settings.approval_ref,
     )
     return trial.executor
+
+
+def _start_arena_sync(
+    baseline: OpenMotionSettings,
+    guard: OpenMotionGuard,
+    fetch: Callable[[], Mapping[str, object]] | None,
+    stop_event: Event | None,
+) -> ArenaSettingsSync | None:
+    """Start the Server arena refresh only when ``POPPY_ARENA_SETTINGS_SYNC=true``.
+
+    Off by default: the Agent then behaves exactly as before (environment values only).
+    """
+    if (
+        fetch is None
+        or os.environ.get("POPPY_ARENA_SETTINGS_SYNC", "false").strip().lower() != "true"
+    ):
+        return None
+    try:
+        interval = float(os.environ.get("POPPY_ARENA_SETTINGS_SYNC_INTERVAL_SECONDS", "30"))
+    except ValueError:
+        interval = DEFAULT_SYNC_INTERVAL_SECONDS
+    sync = ArenaSettingsSync(baseline=baseline, guard=guard, fetch=fetch)
+    sync.refresh_once()
+    stopper = stop_event if stop_event is not None else Event()
+    Thread(
+        target=sync.run, args=(stopper, interval), name="arena-settings-sync", daemon=True
+    ).start()
+    return sync
 
 
 def _publish_blocked(

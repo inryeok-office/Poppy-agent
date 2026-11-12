@@ -263,6 +263,10 @@ class ServerClient:
             action=_recovery_action(data.get("action")),
         )
 
+    def get_arena_settings(self) -> dict[str, Any]:
+        """Read the experience arena (public endpoint); the caller validates and only narrows."""
+        return self._request_data("GET", "/api/v1/arena-settings", expected_status=200)
+
     def close(self) -> None:
         """Close the underlying HTTP connection pool."""
         self._client.close()
