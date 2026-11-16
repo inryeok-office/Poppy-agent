@@ -179,6 +179,10 @@ class OpenMotionActions:
     preset_settle_seconds: float
     preset_methods: Mapping[str, str]
     guard: OpenMotionGuard
+    # A PRESET that failed may still be running on the Robot (a client timeout or a server-side
+    # overtime says nothing about the Robot).  The next physical command waits until this long
+    # after the failure.  0 disables the hold.
+    preset_failure_hold_seconds: float = 10.0
     # PRESET/POSTURE sent right after MOVE/TURN are rejected by the SDK while the Robot is
     # still stopping (2026-11-11: HELLO failed 0.1 s after StopMove).  Wait this long, counted
     # from the end of the motion, before the next PRESET/POSTURE.  0 disables the wait.
@@ -219,6 +223,7 @@ class UnitreeCommandBackend(HardwareCommandPort):
         self._trial_guard = trial_guard
         self._open_actions = open_actions
         self._last_motion_ended_at: float | None = None
+        self._hold_until: float | None = None
         self._initialized = False
 
     @property
@@ -290,6 +295,7 @@ class UnitreeCommandBackend(HardwareCommandPort):
             return False
         if intent.type is CommandType.STOP:
             return True
+        self._wait_for_failure_hold(cancellation_token)
         if intent.type is CommandType.PRESET:
             self._dispatch_preset(intent, cancellation_token)
             return False
@@ -483,9 +489,25 @@ class UnitreeCommandBackend(HardwareCommandPort):
             raise
         except Exception as exc:
             actions.guard.lock(f"PRESET {code} outcome unknown: {safe_exception_type(exc)}")
+            if actions.preset_failure_hold_seconds > 0:
+                self._hold_until = actions.clock() + actions.preset_failure_hold_seconds
             self._log_action_finished(code, "FAILED", exc)
             raise
         self._log_action_finished(code, "COMPLETED")
+
+    def _wait_for_failure_hold(self, cancellation_token: ExecutionCancellationToken | None) -> None:
+        """Do not send a physical command while a failed PRESET may still be running.
+
+        Nothing is sent to the Robot here, so a cancel during the wait needs no lock.
+        """
+        actions = self._open_actions
+        hold_until = self._hold_until
+        if actions is None or hold_until is None:
+            return
+        remaining = hold_until - actions.clock()
+        if remaining > 0:
+            actions.waiter(remaining, cancellation_token)
+        self._hold_until = None
 
     def _rise_sit(self) -> object:
         rise_sit = getattr(self._client, "rise_sit", None)

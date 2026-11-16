@@ -256,3 +256,60 @@ def test_gated_executor_can_use_an_injected_software_double() -> None:
     assert client.initialized is True
     executor.shutdown()
     assert client.initialized is False
+
+
+class TimeoutSdkClient(FakeSdkClient):
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.timeouts: list[float] = []
+
+    def SetTimeout(self, seconds: float) -> None:
+        self.timeouts.append(seconds)
+
+    def Hello(self) -> object:
+        return self._call("Hello")
+
+
+def test_preset_uses_a_longer_timeout_only_for_the_call_and_restores_it() -> None:
+    sdk = TimeoutSdkClient()
+    client = UnitreeSdkCommandClient(sdk_client=sdk, rpc_timeout_seconds=10.0)
+    client.initialize()
+
+    assert client.preset("Hello") is True
+    assert sdk.timeouts == [60.0, 10.0]
+    assert client.sit() is True
+    assert sdk.timeouts == [60.0, 10.0]
+
+
+def test_preset_restores_the_timeout_when_the_call_raises() -> None:
+    sdk = TimeoutSdkClient(fail_operation="Hello")
+    client = UnitreeSdkCommandClient(sdk_client=sdk, rpc_timeout_seconds=10.0)
+    client.initialize()
+
+    with pytest.raises(UnitreeSdkCommandError):
+        client.preset("Hello")
+    assert sdk.timeouts == [60.0, 10.0]
+
+
+def test_preset_keeps_the_sdk_default_when_no_client_timeout_is_configured() -> None:
+    sdk = TimeoutSdkClient()
+    client = UnitreeSdkCommandClient(sdk_client=sdk)
+    client.initialize()
+
+    assert client.preset("Hello") is True
+    assert sdk.timeouts == []
+
+
+def test_last_result_code_is_the_latest_call_return_code() -> None:
+    sdk = TimeoutSdkClient(operation_result=4201)
+    client = UnitreeSdkCommandClient(sdk_client=sdk, rpc_timeout_seconds=10.0)
+    client.initialize()
+    assert client.last_result_code is None
+
+    with pytest.raises(UnitreeSdkCommandError):
+        client.preset("Hello")
+    assert client.last_result_code == 4201
+
+    sdk.operation_result = 0
+    assert client.sit() is True
+    assert client.last_result_code == 0
