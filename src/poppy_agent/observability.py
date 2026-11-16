@@ -55,6 +55,8 @@ EXECUTION_PHYSICAL_TURN_FINISHED = "execution_physical_turn_finished"
 EXECUTION_PHYSICAL_TRIAL_LOCKED = "execution_physical_trial_locked"
 EXECUTION_PHYSICAL_ACTION_STARTED = "execution_physical_action_started"
 EXECUTION_PHYSICAL_ACTION_FINISHED = "execution_physical_action_finished"
+EXECUTION_PHYSICAL_SETTLE = "execution_physical_settle"
+EXECUTION_PHYSICAL_SDK_CALL = "execution_physical_sdk_call"
 
 _ALLOWED_CONTEXT = frozenset(
     {
@@ -67,6 +69,7 @@ _ALLOWED_CONTEXT = frozenset(
         "execution_status",
         "recovery_action",
         "error_type",
+        "failure_code",
         "attempt",
         "max_attempts",
         "protocol_version",
@@ -91,6 +94,8 @@ _ALLOWED_CONTEXT = frozenset(
         "vx",
         "action",
         "sdk_operations",
+        "sdk_operation",
+        "sdk_result_code",
         "trial_mode",
         "expires_at",
     }

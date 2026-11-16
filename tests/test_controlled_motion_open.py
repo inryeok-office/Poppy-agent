@@ -114,15 +114,22 @@ class FakeClock:
 class FakeSportClient:
     """Inert SportClient double; nothing here reaches DDS or a Robot."""
 
-    def __init__(self, clock: FakeClock, *, move_error_at: int | None = None) -> None:
+    def __init__(
+        self,
+        clock: FakeClock,
+        *,
+        move_error_at: int | None = None,
+        fail_codes: dict[str, int] | None = None,
+    ) -> None:
         self.clock = clock
         self.move_error_at = move_error_at
         self.robot = SimulatedRobot(clock.monotonic)
+        self.fail_codes = dict(fail_codes or {})
         self.calls: list[tuple[str, tuple[float, ...]]] = []
 
     def _record(self, name: str, *args: float) -> int:
         self.calls.append((name, args))
-        return 0
+        return self.fail_codes.get(name, 0)
 
     def Init(self) -> None:
         self.calls.append(("Init", ()))
@@ -747,3 +754,330 @@ def test_main_open_mode_with_invalid_config_stays_heartbeat_only() -> None:
     status = runtime.physical_status()
     assert status["state"] == "BLOCKED"
     assert "POPPY_PHYSICAL_TRIAL_EXPIRES_AT is not in the future" in status["configIssues"]
+
+
+# --- settle before PRESET/POSTURE after MOVE/TURN (HELLO was rejected 0.1 s after StopMove) ---
+
+
+def test_settle_before_action_defaults_to_two_seconds_and_is_optional() -> None:
+    assert open_settings().settle_before_action_seconds == 2.0
+    assert (
+        open_settings(POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S="0.5").settle_before_action_seconds
+        == 0.5
+    )
+    assert (
+        open_settings(POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S="0").settle_before_action_seconds == 0.0
+    )
+    assert "POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S" not in OPEN_MOTION_ENVIRONMENT_KEYS
+
+
+@pytest.mark.parametrize("value", ["abc", "-1", "nan", "inf", "16"])
+def test_invalid_settle_before_action_blocks_with_a_reason(value: str) -> None:
+    issues = issues_for(POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S=value)
+
+    assert any("POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S" in issue for issue in issues)
+
+
+def test_move_then_preset_waits_for_the_robot_to_stop_before_the_sdk_call() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    result = run(build(clock, sport), move(0.5), preset("HELLO"))
+
+    assert result.status is ExecutionStatus.COMPLETED
+    names = sport.names()
+    assert names[0] == "Move"
+    # BalanceStand first (base stance), then wait, then Hello, then the usual BalanceStand.
+    assert names[-4:] == ["StopMove", "BalanceStand", "Hello", "BalanceStand"]
+    assert clock.waits[-3:] == [pytest.approx(2.0), 2.0, 5.0]
+
+
+def test_turn_then_posture_waits_before_the_posture_command() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    result = run(build(clock, sport), turn(90), posture(Posture.STAND))
+
+    assert result.status is ExecutionStatus.COMPLETED
+    assert pytest.approx(2.0) in clock.waits
+    assert clock.waits[-2:] == [pytest.approx(2.0), 3.0]
+    assert "BalanceStand" not in sport.names()[: sport.names().index("StandUp")]
+
+
+def test_preset_without_a_preceding_motion_does_not_wait() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+
+    assert run(build(clock, sport), preset("HELLO")).status is ExecutionStatus.COMPLETED
+    assert clock.waits == [5.0]
+
+
+def test_time_already_spent_waiting_counts_as_settled() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    result = run(build(clock, sport), move(0.5), wait(1.5), preset("HELLO"))
+
+    assert result.status is ExecutionStatus.COMPLETED
+    assert clock.waits[-4:] == [1.5, pytest.approx(0.5), 2.0, 5.0]
+
+
+def test_a_long_enough_wait_after_the_motion_needs_no_extra_settle() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    result = run(build(clock, sport), move(0.5), wait(3), preset("HELLO"))
+
+    assert result.status is ExecutionStatus.COMPLETED
+    assert clock.waits[-3:] == [3.0, 2.0, 5.0]
+
+
+def test_settle_happens_once_per_motion_not_before_every_action() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    result = run(build(clock, sport), move(0.5), preset("HELLO"), preset("HEART"))
+
+    assert result.status is ExecutionStatus.COMPLETED
+    assert clock.waits[-4:] == [pytest.approx(2.0), 2.0, 5.0, 5.0]
+    # the pre-balance happens once per motion; Heart follows Hello's own BalanceStand.
+    assert sport.names()[-5:] == ["BalanceStand", "Hello", "BalanceStand", "Heart", "BalanceStand"]
+
+
+def test_settle_can_be_shortened_or_disabled_by_configuration() -> None:
+    for value, expected_tail in (
+        ("0.5", [pytest.approx(0.5), 2.0, 5.0]),
+        ("0", [2.0, 5.0]),
+    ):
+        clock = FakeClock()
+        sport = FakeSportClient(clock)
+        trial = build(
+            clock, sport, settings=open_settings(POPPY_PHYSICAL_SETTLE_BEFORE_ACTION_S=value)
+        )
+
+        assert run(trial, move(0.5), preset("HELLO")).status is ExecutionStatus.COMPLETED
+        assert clock.waits[-len(expected_tail) :] == expected_tail
+        if value == "0":
+            # no stop wait: the wait before the last two is still a short move-stream wait
+            assert clock.waits[-3] < 1.0
+
+
+def test_cancellation_during_the_settle_wait_sends_no_preset() -> None:
+    probe_clock = FakeClock()
+    run(build(probe_clock, FakeSportClient(probe_clock)), move(0.5))
+    waits_for_the_move = len(probe_clock.waits)
+
+    clock = FakeClock(cancel_after_waits=waits_for_the_move + 1)
+    sport = FakeSportClient(clock)
+    result = run(build(clock, sport), move(0.5), preset("HELLO"))
+
+    assert result.status is ExecutionStatus.CANCELLED
+    assert sport.names()[0] == "Move"
+    assert "Hello" not in sport.names()
+    assert "BalanceStand" not in sport.names()
+
+
+def test_the_settle_wait_is_not_counted_in_the_planned_motion_time_limit() -> None:
+    clock = FakeClock()
+    trial = build(clock, FakeSportClient(clock))
+    program = task(move(1.0), preset("HELLO")).command_program
+
+    summary = trial.guard.plan(program, sitting=False)
+
+    # MOVE 1 m at 0.5 m/s = 2 s, plus the 5 s preset settle; the 2 s stop wait is idle time.
+    assert summary.motion_seconds == pytest.approx(7.0)
+
+
+def test_a_program_at_the_time_limit_is_still_admitted_with_the_settle_wait() -> None:
+    clock = FakeClock()
+    trial = build(clock, FakeSportClient(clock))
+    # 5 s preset settle x 23 + 2 s move = 117 s planned: inside the 120 s limit.
+    commands = [move(1.0)] + [preset("HELLO") for _ in range(23)]
+
+    assert run(trial, *commands).status is ExecutionStatus.COMPLETED
+
+
+# --- optional speed source: wait until the Robot is slow (0.3 s minimum, 3 s maximum) ---
+
+
+class SpeedProbeHarness:
+    """Drive only the backend's settle logic with a fake clock and a scripted speed source."""
+
+    def __init__(self, speeds: list[float | None]) -> None:
+        from typing import Any
+
+        from poppy_agent.hardware.unitree import OpenMotionActions, UnitreeCommandBackend
+
+        self.now = 10.0
+        self.waits: list[float] = []
+        self.speeds = list(speeds)
+        self.probes = 0
+
+        def waiter(seconds: float, _token: object) -> None:
+            self.waits.append(seconds)
+            self.now += seconds
+
+        def probe() -> float | None:
+            self.probes += 1
+            return self.speeds.pop(0) if self.speeds else self.last
+
+        self.last: float | None = speeds[-1] if speeds else None
+        actions = OpenMotionActions(
+            waiter=waiter,
+            posture_settle_seconds=3.0,
+            preset_settle_seconds=5.0,
+            preset_methods={},
+            guard=None,  # type: ignore[arg-type]
+            clock=lambda: self.now,
+            speed_probe=probe,
+        )
+        self.backend: Any = UnitreeCommandBackend(object(), open_actions=actions)  # type: ignore[arg-type]
+        self.backend._last_motion_ended_at = self.now
+
+    def settle(self) -> None:
+        self.backend._settle_before_action("HELLO", None)
+
+
+def test_speed_probe_waits_at_least_the_minimum_even_if_the_robot_already_looks_stopped() -> None:
+    harness = SpeedProbeHarness([0.0])
+    harness.settle()
+
+    assert harness.waits == [pytest.approx(0.1)] * 3
+    assert harness.now - 10.0 == pytest.approx(0.3)
+
+
+def test_speed_probe_proceeds_as_soon_as_the_robot_is_slow_enough() -> None:
+    # probed from 0.3 s on: unknown, unknown, 0.4, 0.2, then below the 0.05 m/s threshold
+    harness = SpeedProbeHarness([None, None, 0.4, 0.2, 0.01])
+    harness.settle()
+
+    assert sum(harness.waits) == pytest.approx(0.7)
+    assert harness.backend._last_motion_ended_at is None
+
+
+def test_speed_probe_proceeds_with_a_warning_after_the_maximum_wait(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    harness = SpeedProbeHarness([0.4])
+    with caplog.at_level("WARNING", logger="poppy_agent.hardware.unitree"):
+        harness.settle()
+
+    assert sum(harness.waits) == pytest.approx(3.0)
+    warnings = [
+        r for r in caplog.records if getattr(r, "poppy_event", "") == "execution_physical_settle"
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].levelname == "WARNING"
+    assert warnings[0].poppy_context["execution_status"] == "MAX_WAIT_EXCEEDED"  # type: ignore[attr-defined]
+    assert harness.backend._last_motion_ended_at is None
+
+
+# --- BalanceStand first after a motion, per-call logs, no lock after a failed PRESET ---
+
+
+def sdk_call_logs(caplog: pytest.LogCaptureFixture) -> list[dict]:
+    return [
+        {"event": r.poppy_event, **r.poppy_context}  # type: ignore[attr-defined]
+        for r in caplog.records
+        if getattr(r, "poppy_event", "") == "execution_physical_sdk_call"
+    ]
+
+
+def test_balance_before_preset_defaults_and_validation() -> None:
+    assert open_settings().balance_before_preset_settle_seconds == 2.0
+    zero = open_settings(POPPY_PHYSICAL_BALANCE_BEFORE_PRESET_SETTLE_S="0")
+    assert zero.balance_before_preset_settle_seconds == 0.0
+    assert "POPPY_PHYSICAL_BALANCE_BEFORE_PRESET_SETTLE_S" not in OPEN_MOTION_ENVIRONMENT_KEYS
+    for bad in ("abc", "-1", "16"):
+        issues = issues_for(POPPY_PHYSICAL_BALANCE_BEFORE_PRESET_SETTLE_S=bad)
+        assert any("POPPY_PHYSICAL_BALANCE_BEFORE_PRESET_SETTLE_S" in issue for issue in issues)
+
+
+def test_turn_then_preset_also_takes_the_base_stance_first() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+
+    assert run(build(clock, sport), turn(90), preset("HEART")).status is ExecutionStatus.COMPLETED
+    assert sport.names()[-3:] == ["BalanceStand", "Heart", "BalanceStand"]
+
+
+def test_preset_alone_keeps_the_original_sequence() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+
+    assert run(build(clock, sport), preset("HELLO")).status is ExecutionStatus.COMPLETED
+    assert sport.names() == ["Hello", "BalanceStand"]
+
+
+def test_balance_before_preset_can_be_switched_off() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    settings = open_settings(POPPY_PHYSICAL_BALANCE_BEFORE_PRESET_SETTLE_S="0")
+
+    assert (
+        run(build(clock, sport, settings=settings), move(0.5), preset("HELLO")).status
+        is ExecutionStatus.COMPLETED
+    )
+    assert sport.names()[-3:] == ["StopMove", "Hello", "BalanceStand"]
+    assert clock.waits[-2:] == [pytest.approx(2.0), 5.0]
+
+
+def test_failed_base_stance_sends_no_preset_and_does_not_lock_the_next_execution() -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock, fail_codes={"BalanceStand": 3203})
+    trial = build(clock, sport)
+
+    failed = run(trial, move(0.5), preset("HELLO"))
+    assert failed.status is ExecutionStatus.FAILED
+    assert "Hello" not in sport.names()
+
+    sport.fail_codes.clear()
+    sport.calls.clear()
+    assert run(trial, move(0.5)).status is ExecutionStatus.COMPLETED
+    assert run(trial, preset("HELLO")).status is ExecutionStatus.COMPLETED
+    assert trial.guard.available() is True
+
+
+def test_failure_after_the_preset_does_not_lock_the_next_execution() -> None:
+    # 2026-11-11: Hello was accepted, BalanceStand failed 5 s later.
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    trial = build(clock, sport)
+    sport.fail_codes = {}
+    assert run(trial, move(0.5), preset("HELLO")).status is ExecutionStatus.COMPLETED
+
+    sport.fail_codes = {"BalanceStand": 3203}
+    sport.calls.clear()
+    failed = run(trial, preset("HELLO"))
+    assert failed.status is ExecutionStatus.FAILED
+    assert sport.names() == ["Hello", "BalanceStand"]
+
+    sport.fail_codes = {}
+    sport.calls.clear()
+    assert run(trial, move(0.5), preset("HEART")).status is ExecutionStatus.COMPLETED
+    assert trial.guard.available() is True
+
+
+def test_each_sdk_call_is_logged_with_its_name_and_return_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock, fail_codes={"BalanceStand": 3203})
+    with caplog.at_level("INFO", logger="poppy_agent.hardware.unitree_sdk"):
+        result = run(build(clock, sport), move(0.5), preset("HELLO"))
+
+    assert result.status is ExecutionStatus.FAILED
+    logs = sdk_call_logs(caplog)
+    assert [log["sdk_operation"] for log in logs] == ["BalanceStand"]
+    assert logs[0]["execution_status"] == "FAILED"
+    assert logs[0]["sdk_result_code"] == 3203
+    assert not any(log["sdk_operation"] in {"Move", "StopMove"} for log in logs)
+
+
+def test_successful_sequence_logs_each_call_in_order(caplog: pytest.LogCaptureFixture) -> None:
+    clock = FakeClock()
+    sport = FakeSportClient(clock)
+    with caplog.at_level("INFO", logger="poppy_agent.hardware.unitree_sdk"):
+        run(build(clock, sport), move(0.5), preset("HELLO"))
+
+    logs = sdk_call_logs(caplog)
+    assert [(log["sdk_operation"], log["execution_status"]) for log in logs] == [
+        ("BalanceStand", "OK"),
+        ("Hello", "OK"),
+        ("BalanceStand", "OK"),
+    ]

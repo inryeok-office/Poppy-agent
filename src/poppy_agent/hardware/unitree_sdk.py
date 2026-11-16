@@ -7,6 +7,7 @@ any physical safety approval or motion defaults.
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections.abc import Callable
@@ -21,14 +22,25 @@ from poppy_agent.execution.cancellation import (
     ExecutionCancellationToken,
     ExecutionCancelledError,
 )
+from poppy_agent.execution.failure import CodedError, FailureCode
 from poppy_agent.execution.motion import MotionPlan, MotionRateUnit, MotionUnit
+from poppy_agent.observability import (
+    EXECUTION_PHYSICAL_SDK_CALL,
+    log_event,
+    safe_exception_type,
+)
 from poppy_agent.robot.adapter import SportStateSample
 
 from .closed_loop import ClosedLoopLimits, MotionTracker
 from .unitree import UnitreeCommandClient
 
+logger = logging.getLogger(__name__)
 
-class UnitreeSdkCommandError(RuntimeError):
+# Streamed every 50 ms or summarized by the motion trace; logging each call would flood the log.
+_UNLOGGED_SDK_OPERATIONS = frozenset({"Move", "StopMove"})
+
+
+class UnitreeSdkCommandError(CodedError):
     """Raised when the optional SDK cannot be initialized or called safely."""
 
 
@@ -354,7 +366,9 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
                     ) from exc
                 trace.move_calls += 1
                 if timing.monotonic() - call_started >= timing.max_move_call_seconds:
-                    raise UnitreeMotionOutcomeUnknownError("Unitree SDK Move call blocked too long")
+                    raise UnitreeMotionOutcomeUnknownError(
+                        "Unitree SDK Move call blocked too long", failure_code=FailureCode.TIMEOUT
+                    )
                 next_send = start + trace.move_calls * timing.move_period_seconds
                 wait = min(next_send, start + plan.duration_seconds) - timing.monotonic()
                 if wait > 0:
@@ -432,7 +446,9 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
                     ) from exc
                 trace.move_calls += 1
                 if timing.monotonic() - call_started >= timing.max_move_call_seconds:
-                    raise UnitreeMotionOutcomeUnknownError("Unitree SDK Move call blocked too long")
+                    raise UnitreeMotionOutcomeUnknownError(
+                        "Unitree SDK Move call blocked too long", failure_code=FailureCode.TIMEOUT
+                    )
                 wait = start + trace.move_calls * timing.move_period_seconds - timing.monotonic()
                 if wait > 0:
                     if self._wait(wait, cancellation_token) and cancellation_token is not None:
@@ -504,13 +520,45 @@ class UnitreeSdkCommandClient(UnitreeCommandClient):
         try:
             result = method(*args)
         except Exception as exc:
+            self._log_sdk_call(method_name, "FAILED", error_type=safe_exception_type(exc))
             raise UnitreeSdkCommandError(
                 f"Unitree SDK {method_name} failed: {type(exc).__name__}"
             ) from exc
-        normalized = _normalize_result(result, method_name)
+        result_code = result if type(result) is int else None
+        try:
+            normalized = _normalize_result(result, method_name)
+        except UnitreeSdkCommandError:
+            self._log_sdk_call(method_name, "FAILED", error_type="UnsupportedResult")
+            raise
         if normalized is not True:
-            raise UnitreeSdkCommandError(f"Unitree SDK {method_name} reported failure")
+            self._log_sdk_call(method_name, "FAILED", result_code=result_code)
+            raise UnitreeSdkCommandError(
+                f"Unitree SDK {method_name} reported failure",
+                failure_code=FailureCode.SDK_REJECTED,
+            )
+        self._log_sdk_call(method_name, "OK", result_code=result_code)
         return True
+
+    @staticmethod
+    def _log_sdk_call(
+        method_name: str,
+        status: str,
+        *,
+        result_code: int | None = None,
+        error_type: str | None = None,
+    ) -> None:
+        """One line per SDK call so a failure names the call and its return code."""
+        if method_name in _UNLOGGED_SDK_OPERATIONS:
+            return
+        log_event(
+            logger,
+            logging.ERROR if status == "FAILED" else logging.INFO,
+            EXECUTION_PHYSICAL_SDK_CALL,
+            sdk_operation=method_name,
+            execution_status=status,
+            sdk_result_code=result_code,
+            error_type=error_type,
+        )
 
     def _require_initialized(self) -> None:
         if not self._initialized or self._sdk_client is None:
