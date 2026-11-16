@@ -14,6 +14,7 @@ from poppy_agent.execution.executor import (
     MockCommandTarget,
     MockExecutionExecutor,
 )
+from poppy_agent.execution.failure import FailureCode
 from poppy_agent.execution.models import (
     SUPPORTED_EXECUTION_PROTOCOL_VERSION,
     ExecutionResult,
@@ -48,6 +49,7 @@ from poppy_agent.execution.safety import (
 )
 
 __all__ = [
+    "FailureCode",
     "SUPPORTED_EXECUTION_PROTOCOL_VERSION",
     "CancellationSleeper",
     "CommandExecutionTarget",

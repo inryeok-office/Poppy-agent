@@ -14,6 +14,7 @@ from threading import Lock
 
 from poppy_agent.command import CommandType, HighLevelCommandProgram, TurnParameters
 from poppy_agent.config.physical_trial import PhysicalTrialSettings
+from poppy_agent.execution.failure import CodedError, FailureCode
 from poppy_agent.execution.readiness import (
     PhysicalCommandClientKind,
     PhysicalReadinessEvidence,
@@ -22,8 +23,10 @@ from poppy_agent.execution.readiness import (
 _NON_PHYSICAL_COMMANDS = frozenset({CommandType.WAIT, CommandType.STOP})
 
 
-class TrialGuardError(RuntimeError):
+class TrialGuardError(CodedError):
     """Raised when a program is outside the controlled trial budget."""
+
+    failure_code = FailureCode.SAFETY_REJECTED
 
 
 class TrialGuardState(StrEnum):
@@ -114,7 +117,9 @@ class TrialGuard:
             if self._motion_seconds_used + program_seconds > self._settings.max_total_seconds:
                 raise TrialGuardError("controlled trial total motion time would be exceeded")
             if turns and self._telemetry_fresh() is not True:
-                raise TrialGuardError("Robot telemetry is not fresh")
+                raise TrialGuardError(
+                    "Robot telemetry is not fresh", failure_code=FailureCode.TELEMETRY_STALE
+                )
             self._commands_used += len(turns)
             self._turn_degrees_used += program_degrees
             self._motion_seconds_used += program_seconds

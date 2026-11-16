@@ -224,6 +224,9 @@ def create_open_motion_executor(
                 code: PRESET_SDK_METHODS[code] for code in sorted(settings.allowed_presets)
             },
             guard=guard,
+            settle_before_action_seconds=settings.settle_before_action_seconds,
+            balance_before_preset_settle_seconds=settings.balance_before_preset_settle_seconds,
+            clock=stream_timing.monotonic,
         ),
     )
     target = HardwareCommandTarget(backend)

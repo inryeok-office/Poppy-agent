@@ -7,6 +7,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from poppy_agent.command.models import HighLevelCommandProgram
+from poppy_agent.execution.failure import FailureCode
 
 SUPPORTED_EXECUTION_PROTOCOL_VERSION = 1
 
@@ -58,3 +59,4 @@ class ExecutionResult:
     execution_id: UUID
     status: ExecutionStatus
     failure_reason: str | None = None
+    failure_code: FailureCode | None = None
