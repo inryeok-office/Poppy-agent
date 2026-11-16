@@ -12,8 +12,10 @@ from types import FrameType
 from uuid import UUID
 
 from poppy_agent.agent import Agent, create_agent
+from poppy_agent.command import Posture
 from poppy_agent.config import AgentConfig, ConfigurationError, OpenMotionSettings
 from poppy_agent.execution import MockExecutionExecutor, PhysicalExecutionBlockedError
+from poppy_agent.execution.open_motion import OpenMotionGuardState
 from poppy_agent.hardware import create_controlled_trial_executor, create_open_motion_executor
 from poppy_agent.observability import (
     PHYSICAL_EXECUTION_BLOCKED,
@@ -139,8 +141,14 @@ def _create_physical_trial_executor(
         _publish_blocked(runtime, config, ("ROBOT_ADAPTER_UNSUPPORTED",))
         return None
     if isinstance(config.physical_trial, OpenMotionSettings):
+        posture_probe = getattr(adapter, "observed_posture", None)
         return _create_open_motion_executor(
-            config, config.physical_trial, runtime, telemetry_fresh, set_command_readiness
+            config,
+            config.physical_trial,
+            runtime,
+            telemetry_fresh,
+            set_command_readiness,
+            posture_probe if callable(posture_probe) else None,
         )
     try:
         trial = create_controlled_trial_executor(
@@ -204,8 +212,13 @@ def _create_open_motion_executor(
     runtime: AgentServerRuntime,
     telemetry_fresh: Callable[[], bool],
     set_command_readiness: Callable[[Callable[[], bool]], None],
+    posture_probe: Callable[[], Posture | None] | None = None,
 ) -> MockExecutionExecutor | None:
-    """Return the ``controlled_motion_open`` executor, or ``None`` for heartbeat-only."""
+    """Return the ``controlled_motion_open`` executor, or ``None`` for heartbeat-only.
+
+    ``posture_probe`` comes from the adapter's read-only ``observed_posture`` when
+    it exists; without it a failed posture command needs an Agent restart.
+    """
     try:
         trial = create_open_motion_executor(
             robot_id=UUID(config.robot_id),
@@ -213,6 +226,7 @@ def _create_open_motion_executor(
             settings=settings,
             telemetry_fresh=telemetry_fresh,
             network_interface=config.network_interface,
+            posture_probe=posture_probe,
         )
     except PhysicalExecutionBlockedError as exc:
         _publish_blocked(runtime, config, tuple(str(exc).split(": ", 1)[-1].split(", ")))
@@ -241,10 +255,11 @@ def _create_open_motion_executor(
                 "trial": guard.snapshot(),
             }
         ready = command_ready() and telemetry_fresh() is True
+        posture_unknown = guard.state() is OpenMotionGuardState.POSTURE_UNKNOWN
         return {
             "enabled": True,
             "state": "READY" if ready else "NOT_READY",
-            "reasons": [],
+            "reasons": ["POSTURE_UNKNOWN"] if posture_unknown else [],
             "configIssues": [],
             "mode": settings.mode,
             "linearSpeedMetersPerSecond": settings.linear_speed_meters_per_second,

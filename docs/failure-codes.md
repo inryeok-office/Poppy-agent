@@ -8,7 +8,7 @@ Agent 는 FAILED 실행마다 `ExecutionResult.failure_code` 와 구조화 로�
 | `SAFETY_REJECTED` | 안전 정책·guard 한도로 dispatch 전 거부 | `ExecutionSafetyValidator`, `OpenMotionGuard`/`TrialGuard` 한도 |
 | `APPROVAL_EXPIRED` | 실제 동작 승인 시간 만료 | `OpenMotionGuard.admit` |
 | `TELEMETRY_STALE` | 로봇 텔레메트리가 신선하지 않아 거부 | `OpenMotionGuard`/`TrialGuard` |
-| `POSTURE_UNKNOWN` | 자세 불명으로 거부 | #110(#98) 머지 후 연결 |
+| `POSTURE_UNKNOWN` | 자세·프리셋 실패 뒤 자세 불명으로 거부 | `OpenMotionGuard.admit` (#98) |
 | `SDK_REJECTED` | SDK 가 명령을 거절(0 이 아닌 결과) | `UnitreeSdkCommandClient._call_operation`, backend 결과 검사 |
 | `TIMEOUT` | SDK `Move` 호출이 제한 시간 이상 막힘 | `execute_motion_with_cancellation` |
 | `NOT_MOVED` | 폐루프에서 미이동 판정 | #97 폐루프 머지 후 연결 |
