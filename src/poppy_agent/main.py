@@ -24,6 +24,7 @@ from poppy_agent.observability import (
     log_event,
     safe_exception_type,
 )
+from poppy_agent.robot import SportStateSample
 from poppy_agent.server import (
     AgentServerRuntime,
     AgentServerRuntimeError,
@@ -139,8 +140,21 @@ def _create_physical_trial_executor(
         _publish_blocked(runtime, config, ("ROBOT_ADAPTER_UNSUPPORTED",))
         return None
     if isinstance(config.physical_trial, OpenMotionSettings):
+        sport_state = getattr(adapter, "sport_state", None)
+        if not callable(sport_state):
+            _publish_blocked(runtime, config, ("ROBOT_ADAPTER_UNSUPPORTED",))
+            return None
+
+        def motion_telemetry_fresh() -> bool:
+            return telemetry_fresh() is True and sport_state() is not None
+
         return _create_open_motion_executor(
-            config, config.physical_trial, runtime, telemetry_fresh, set_command_readiness
+            config,
+            config.physical_trial,
+            runtime,
+            motion_telemetry_fresh,
+            sport_state,
+            set_command_readiness,
         )
     try:
         trial = create_controlled_trial_executor(
@@ -203,6 +217,7 @@ def _create_open_motion_executor(
     settings: OpenMotionSettings,
     runtime: AgentServerRuntime,
     telemetry_fresh: Callable[[], bool],
+    sport_state: Callable[[], SportStateSample | None],
     set_command_readiness: Callable[[Callable[[], bool]], None],
 ) -> MockExecutionExecutor | None:
     """Return the ``controlled_motion_open`` executor, or ``None`` for heartbeat-only."""
@@ -212,6 +227,7 @@ def _create_open_motion_executor(
             physical_execution_enabled=True,
             settings=settings,
             telemetry_fresh=telemetry_fresh,
+            sport_state=sport_state,
             network_interface=config.network_interface,
         )
     except PhysicalExecutionBlockedError as exc:

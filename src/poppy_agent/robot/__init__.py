@@ -4,6 +4,7 @@ from poppy_agent.robot.adapter import (
     RobotAdapter,
     RobotIdentity,
     RobotStatus,
+    SportStateSample,
 )
 from poppy_agent.robot.mock import MockRobotAdapter, MockRobotSpec
 from poppy_agent.robot.unitree import (
@@ -18,6 +19,7 @@ __all__ = [
     "RobotAdapter",
     "RobotIdentity",
     "RobotStatus",
+    "SportStateSample",
     "UnitreeGo2Adapter",
     "UnitreeGo2Config",
     "UnitreeSdkUnavailableError",

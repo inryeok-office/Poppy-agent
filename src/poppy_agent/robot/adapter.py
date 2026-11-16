@@ -27,6 +27,17 @@ class RobotStatus:
     current_execution_id: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class SportStateSample:
+    """Fresh body pose from read-only sport state, in the Robot's odometry frame."""
+
+    x_meters: float
+    y_meters: float
+    yaw_radians: float
+    mode: int
+    gait_type: int
+
+
 class RobotAdapter(Protocol):
     """Minimum lifecycle and telemetry contract required by the Agent."""
 

@@ -34,6 +34,8 @@ from poppy_agent.execution import ExecutionCancellationToken, ExecutionStatus, E
 from poppy_agent.execution.open_motion import OpenMotionGuard, OpenMotionGuardError
 from poppy_agent.hardware import OpenMotionExecution, create_open_motion_executor
 from poppy_agent.hardware.unitree_sdk import MotionStreamTiming
+from poppy_agent.robot import SportStateSample
+from sport_simulator import SimulatedRobot
 
 ROBOT_ID = UUID("00000000-0000-0000-0000-000000000001")
 EXECUTION_ID = UUID("00000000-0000-0000-0000-0000000000e2")
@@ -121,6 +123,7 @@ class FakeSportClient:
     ) -> None:
         self.clock = clock
         self.move_error_at = move_error_at
+        self.robot = SimulatedRobot(clock.monotonic)
         self.fail_codes = dict(fail_codes or {})
         self.calls: list[tuple[str, tuple[float, ...]]] = []
 
@@ -135,9 +138,11 @@ class FakeSportClient:
         if self.move_error_at == len(self.moves):
             self.calls.append(("Move", (vx, vy, vyaw)))
             raise RuntimeError("simulated transport failure")
+        self.robot.command(vx, vyaw)
         return self._record("Move", vx, vy, vyaw)
 
     def StopMove(self) -> int:
+        self.robot.stop()
         return self._record("StopMove")
 
     def Sit(self) -> int:
@@ -196,6 +201,7 @@ def build(
         physical_execution_enabled=True,
         settings=settings or open_settings(),
         telemetry_fresh=lambda: telemetry_fresh,
+        sport_state=sport.robot.state,
         sport_client_factory=lambda: sport,
         timing=MotionStreamTiming(monotonic=clock.monotonic, sleep=clock.sleep, wait=clock.wait),
         now=clock.wall_now,
@@ -342,8 +348,8 @@ def test_move_streams_signed_vx_then_stop_move_three_times(
     result = run(build(clock, sport, settings=settings), move(0.5, direction))
 
     assert result.status is ExecutionStatus.COMPLETED
-    assert len(sport.moves) == 20  # 0.5 m / 0.5 m/s = 1.0 s at 50 ms
-    assert {args for _name, args in sport.moves} == {(vx, 0.0, 0.0)}
+    assert sport.moves[0][1] == (vx, 0.0, 0.0)
+    assert all(args[0] * vx > 0 and args[1:] == (0.0, 0.0) for _name, args in sport.moves)
     assert sport.names() == ["Move", "StopMove", "StopMove", "StopMove"]
 
 
@@ -357,7 +363,6 @@ def test_turn_right_uses_configured_yaw_sign_at_45_degrees_per_second(
     result = run(build(clock, sport, settings=settings), turn(90))
 
     assert result.status is ExecutionStatus.COMPLETED
-    assert len(sport.moves) == 40  # 90 / 45 = 2.0 s
     _, (move_vx, move_vy, vyaw) = sport.moves[0]
     assert (move_vx, move_vy) == (0.0, 0.0)
     assert vyaw == pytest.approx(expected * math.radians(45))
@@ -654,10 +659,14 @@ def test_guard_rejects_concurrent_admission() -> None:
 class FakeAdapter:
     def __init__(self) -> None:
         self.fresh = True
+        self.sample: SportStateSample | None = SportStateSample(0.0, 0.0, 0.0, 1, 1)
         self.readiness = None
 
     def telemetry_is_fresh(self) -> bool:
         return self.fresh
+
+    def sport_state(self) -> SportStateSample | None:
+        return self.sample
 
     def set_command_readiness(self, readiness) -> None:
         self.readiness = readiness
